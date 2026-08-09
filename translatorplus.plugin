@@ -435,12 +435,6 @@ class InMessageAlertHook(MethodHook):
 
 
 class ResultHook(MethodHook):
-    """Only overrides the result while `is_enabled()` returns True.
-    The Xposed hook itself stays installed permanently; toggling the
-    setting just flips this flag instead of hooking/unhooking the
-    method, which is what was causing the crash (repeated hook/unhook
-    of the same method leaves stale references behind)."""
-
     def __init__(self, result_value, is_enabled: Callable[[], bool]):
         self.result_value = result_value
         self.is_enabled = is_enabled
@@ -456,7 +450,6 @@ class LocalPremiumHook:
 
     def premium_hooking(self):
         if getattr(self, "_premium_hooked", False):
-            # Already hooked; never re-hook/unhook on setting toggle.
             return
 
         clazz = jclass("org.telegram.messenger.UserConfig")
@@ -470,8 +463,6 @@ class LocalPremiumHook:
         self._premium_hooked = True
 
     def premium_unhooking(self):
-        # Intentionally a no-op: the hook stays installed for the life of
-        # the plugin. See ResultHook for why (avoids stale-hook crashes).
         pass
 
 
@@ -489,9 +480,6 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
             BulletinHelper.show_error("Translator: Failed to load (core classes not found).")
             return
 
-        # Install the premium hook once, unconditionally. ResultHook checks
-        # the live setting value on every call, so this correctly reflects
-        # the current toggle state without ever needing to unhook/rehook.
         safe_execute(self.premium_hooking, "Premium hooking failed")
         
         try:
