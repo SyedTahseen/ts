@@ -439,18 +439,22 @@ class ResultHook(MethodHook):
         self.result_value = result_value
     
     def before_hooked_method(self, param):
-        param.setResult(self.result_value)
+        safe_execute(lambda: param.setResult(self.result_value), "[PREMIUM_HOOK] setResult failed")
 
 
 class LocalPremiumHook:
 
     def premium_hooking(self):
+        if getattr(self, "_premium_unhooks", None):
+            # Already hooked; avoid stacking duplicate hooks on re-toggle.
+            return
+
         clazz = jclass("org.telegram.messenger.UserConfig")
 
         self._premium_unhooks = [
-            self.hook_method(clazz.getClass().getDeclaredMethod("isPremium"), ResultHook(True)),
-            self.hook_method(clazz.getClass().getDeclaredMethod("hasPremiumOnAccounts"), ResultHook(True)),
-            self.hook_method(MessagesController.getClass().getDeclaredMethod("premiumFeaturesBlocked"), ResultHook(False)),
+            self.hook_method(clazz.getDeclaredMethod("isPremium"), ResultHook(True)),
+            self.hook_method(clazz.getDeclaredMethod("hasPremiumOnAccounts"), ResultHook(True)),
+            self.hook_method(MessagesController.getDeclaredMethod("premiumFeaturesBlocked"), ResultHook(False)),
         ]
 
     def premium_unhooking(self):
@@ -475,11 +479,10 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
         self._toggle_premium_hooks(self.get_setting("enable_entire_chat_translation", False))
         
         try:
-            translate_controller_class = TranslateController.getClass()
             log("Translator: Attempting to hook 'pushToTranslate'...")
             
             target_method = safe_execute(
-                lambda: translate_controller_class.getDeclaredMethod("pushToTranslate", MessageObject, String, Callback4),
+                lambda: TranslateController.getDeclaredMethod("pushToTranslate", MessageObject, String, Callback4),
                 "Translator [ERROR]: Failed to find 'pushToTranslate'"
             )
             
