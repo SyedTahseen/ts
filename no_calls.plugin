@@ -8,7 +8,7 @@ from hook_utils import find_class
 
 __id__ = "no_calls"
 __name__ = "No Calls"
-__description__ = "Completely disables calls and video calls, group calls and voice chats (incoming and outgoing)."
+__description__ = "Полностью отключает звонки и видеозвонки, групповые звонки и голосовые чаты (входящие и исходящие)."
 __author__ = "@exteraclaude"
 __version__ = "1.0.0"
 __icon__ = "Main_BW7oyvliH04FCHk2Yu7iDGI54_by_StickersPackRobot/4"
@@ -104,7 +104,7 @@ class _StartCallReplacement(MethodReplacement):
         self.plugin = plugin
 
     def replace_hooked_method(self, param):
-        self.plugin._notify("Calls disabled")
+        self.plugin._notify("Звонки отключены")
         return None
 
 
@@ -154,11 +154,11 @@ class NoCallsPlugin(BasePlugin):
         short = _short_name(request_name)
         if self._block_private() and short in PRIVATE_CALL_REQUESTS:
             if short == "requestCall":
-                self._notify("Calls disabled")
+                self._notify("Звонки отключены")
             return HookResult(strategy=HookStrategy.CANCEL)
         if self._block_group() and short in GROUP_CALL_REQUESTS:
             if short in ("createGroupCall", "joinGroupCall", "createConferenceCall"):
-                self._notify("Voice chats disabled")
+                self._notify("Голосовые чаты отключены")
             return HookResult(strategy=HookStrategy.CANCEL)
         return HookResult(strategy=HookStrategy.DEFAULT)
 
@@ -222,40 +222,40 @@ class NoCallsPlugin(BasePlugin):
 
     def create_settings(self) -> List[Any]:
         return [
-            Header(text="What to block"),
+            Header(text="Что блокировать"),
             Switch(
                 key="block_private",
-                text="Private calls",
+                text="Личные звонки",
                 default=True,
-                subtext="Audio and video calls, incoming and outgoing",
+                subtext="Аудио и видеозвонки, входящие и исходящие",
                 icon="msg_calls",
             ),
             Switch(
                 key="block_group",
-                text="Group calls and voice chats",
+                text="Групповые звонки и голосовые чаты",
                 default=True,
-                subtext="Voice chats, video conferences, live streams",
+                subtext="Голосовые чаты, видеоконференции, трансляции",
                 icon="msg_voicechat",
             ),
             Switch(
                 key="hide_icons",
-                text="Hide call icons and buttons",
+                text="Скрывать иконки и кнопки звонков",
                 default=True,
-                subtext="Removes call buttons in profile and chat (restart required)",
+                subtext="Убирает кнопки звонка в профиле и чате (нужен перезапуск)",
                 icon="msg_block",
             ),
             Divider(),
-            Header(text="Notifications"),
+            Header(text="Уведомления"),
             Switch(
                 key="show_bulletin",
-                text="Show popup notification",
+                text="Показывать всплывающее уведомление",
                 default=True,
-                subtext="Short notification when attempting to start a call",
+                subtext="Короткое уведомление при попытке начать звонок",
                 icon="msg_info",
             ),
             Divider(),
             Text(
-                text="Calls are blocked at the level of network requests, incoming updates, and the interface",
+                text="Звонки блокируются на уровне сетевых запросов, входящих апдейтов и интерфейса",
                 icon="msg_info",
             ),
         ]
