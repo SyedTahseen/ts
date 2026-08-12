@@ -17,7 +17,8 @@ from ui.settings import Header, Divider, Text, Switch
 from hook_utils import get_private_field
 
 _session = None
-_executor = ThreadPoolExecutor(max_workers=15, thread_name_prefix="translator_")
+_executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="translator_")
+_interactive_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="translator_interactive_")
 
 CACHE_DIR = os.path.expanduser("~/.exteragram_translatorplus_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -276,7 +277,7 @@ def _init_in_message_classes():
         return False
 
 
-def _translate_with_google(text: str, target_lang: str) -> Optional[str]:
+def _translate_with_google(text: str, target_lang: str, _retry: bool = True) -> Optional[str]:
     try:
         params = {"client": "gtx", "sl": "auto", "tl": target_lang, "dt": "t", "q": text}
         headers = {"User-Agent": get_random_user_agent()}
@@ -288,6 +289,10 @@ def _translate_with_google(text: str, target_lang: str) -> Optional[str]:
         result = response.json()
         if result and isinstance(result, list) and result[0] and isinstance(result[0], list):
             return result[0][0]
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.ReadTimeout) as e:
+        if _retry:
+            time.sleep(0.3)
+            return _translate_with_google(text, target_lang, _retry=False)
     except Exception as e:
         log(f"[GOOGLE] {str(e)[:40]}")
     return None
@@ -423,7 +428,7 @@ class InMessageAlertHook(MethodHook):
                 return
             
             lang = _in_message_classes['TA'].getToLanguage()
-            _executor.submit(_translate_and_apply_in_message, str(txt), lang, obj, f)
+            _interactive_executor.submit(_translate_and_apply_in_message, str(txt), lang, obj, f)
             self.pending = True
         except Exception as e:
             log(f"[IN-MSG] showAlert hook failed: {e}")
@@ -435,28 +440,35 @@ class InMessageAlertHook(MethodHook):
 
 
 class ResultHook(MethodHook):
-    def __init__(self, result_value):
+    def __init__(self, result_value, is_enabled: Callable[[], bool]):
         self.result_value = result_value
-    
+        self.is_enabled = is_enabled
+
     def before_hooked_method(self, param):
-        param.setResult(self.result_value)
+        def _apply():
+            if self.is_enabled():
+                param.setResult(self.result_value)
+        safe_execute(_apply, "[PREMIUM_HOOK] setResult failed")
 
 
 class LocalPremiumHook:
 
     def premium_hooking(self):
+        if getattr(self, "_premium_hooked", False):
+            return
+
         clazz = jclass("org.telegram.messenger.UserConfig")
+        is_enabled = lambda: bool(self.get_setting("enable_entire_chat_translation", False))
 
         self._premium_unhooks = [
-            self.hook_method(clazz.getClass().getDeclaredMethod("isPremium"), ResultHook(True)),
-            self.hook_method(clazz.getClass().getDeclaredMethod("hasPremiumOnAccounts"), ResultHook(True)),
-            self.hook_method(MessagesController.getClass().getDeclaredMethod("premiumFeaturesBlocked"), ResultHook(False)),
+            self.hook_method(clazz.getClass().getDeclaredMethod("isPremium"), ResultHook(True, is_enabled)),
+            self.hook_method(clazz.getClass().getDeclaredMethod("hasPremiumOnAccounts"), ResultHook(True, is_enabled)),
+            self.hook_method(MessagesController.getClass().getDeclaredMethod("premiumFeaturesBlocked"), ResultHook(False, is_enabled)),
         ]
+        self._premium_hooked = True
 
     def premium_unhooking(self):
-        for unhook in getattr(self, "_premium_unhooks", []):
-            safe_execute(lambda u=unhook: self.unhook_method(u))
-        self._premium_unhooks = []
+        pass
 
 
 class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
@@ -467,12 +479,13 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
         _plugin_instance = self
         self._in_message_hooks = []
         self._premium_unhooks = []
+        self._premium_hooked = False
 
         if not JAVA_CLASSES_FOUND:
             BulletinHelper.show_error("Translator: Failed to load (core classes not found).")
             return
-        
-        self._toggle_premium_hooks(self.get_setting("enable_entire_chat_translation", False))
+
+        safe_execute(self.premium_hooking, "Premium hooking failed")
         
         try:
             translate_controller_class = TranslateController.getClass()
@@ -497,28 +510,20 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
         
         self._setup_in_message_hooks()
 
-    def _toggle_premium_hooks(self, enable: bool):
-        if enable:
-            safe_execute(self.premium_hooking, "Premium hooking failed")
-        else:
-            safe_execute(self.premium_unhooking, "Premium unhooking failed")
-
     def _setup_in_message_hooks(self):
-        if self.get_setting("enable_in_message_translation", False):
-            if not _init_in_message_classes():
-                log("[IN-MESSAGE] Failed to initialize classes")
-                return
-            try:
-                if not self._in_message_hooks:
-                    self._in_message_hooks = [
-                        self.hook_all_methods(_in_message_classes['TA'], "showAlert", InMessageAlertHook()),
-                        self.hook_all_methods(MessageObject, "updateTranslation", BlockRevertHook()),
-                    ]
-                log("[IN-MESSAGE] Hooks enabled")
-            except Exception as e:
-                log(f"[IN-MESSAGE] Failed to setup hooks: {e}")
-        else:
-            self._teardown_in_message_hooks()
+        if not _init_in_message_classes():
+            log("[IN-MESSAGE] Failed to initialize classes")
+            return
+        if self._in_message_hooks:
+            return
+        try:
+            self._in_message_hooks = [
+                self.hook_all_methods(_in_message_classes['TA'], "showAlert", InMessageAlertHook()),
+                self.hook_all_methods(MessageObject, "updateTranslation", BlockRevertHook()),
+            ]
+            log("[IN-MESSAGE] Hooks installed")
+        except Exception as e:
+            log(f"[IN-MESSAGE] Failed to setup hooks: {e}")
 
     def _teardown_in_message_hooks(self):
         for hook_list in self._in_message_hooks:
@@ -601,11 +606,9 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
             lambda: get_messages_controller().getTranslateController().setChatTranslateEnabled(value),
             "[TranslateToggle] Failed to sync with Telegram native toggle"
         )
-        self._toggle_premium_hooks(value)
         self.set_setting("enable_entire_chat_translation", value, reload_settings=True)
 
     def _on_in_message_toggle(self, value):
-        self._setup_in_message_hooks()
         self.set_setting("enable_in_message_translation", value, reload_settings=True)
 
     def create_settings(self):
