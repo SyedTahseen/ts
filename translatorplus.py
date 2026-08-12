@@ -39,14 +39,6 @@ _in_message_translated = set()
 _in_message_classes = {}
 
 
-_debug_enabled = False
-
-
-def debug_log(msg):
-    if _debug_enabled:
-        log(f"[DEBUG] {msg}")
-
-
 def safe_execute(func: Callable, error_prefix: str = "", default=None):
     try:
         return func()
@@ -286,7 +278,6 @@ def _init_in_message_classes():
 
 
 def _translate_with_google(text: str, target_lang: str, _retry: bool = True) -> Optional[str]:
-    start = time.time()
     try:
         params = {"client": "gtx", "sl": "auto", "tl": target_lang, "dt": "t", "q": text}
         headers = {"User-Agent": get_random_user_agent()}
@@ -297,10 +288,8 @@ def _translate_with_google(text: str, target_lang: str, _retry: bool = True) -> 
         response.raise_for_status()
         result = response.json()
         if result and isinstance(result, list) and result[0] and isinstance(result[0], list):
-            debug_log(f"[GOOGLE] translated {len(text)} chars in {time.time() - start:.2f}s")
             return result[0][0]
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.ReadTimeout) as e:
-        debug_log(f"[GOOGLE] request failed after {time.time() - start:.2f}s: {e}")
         if _retry:
             time.sleep(0.3)
             return _translate_with_google(text, target_lang, _retry=False)
@@ -314,14 +303,11 @@ def _cached_translate(text: str, target_lang: str) -> Optional[str]:
     cache_data = load_cache()
 
     if cache_key in cache_data:
-        debug_log(f"[CACHE] hit for {len(text)} chars -> {target_lang}")
         return cache_data[cache_key]
 
     if not is_online():
-        debug_log("[CACHE] miss, but offline - skipping")
         return None
 
-    debug_log(f"[CACHE] miss for {len(text)} chars -> {target_lang}, requesting")
     translated_text = _translate_with_google(text, target_lang)
     if not translated_text:
         return None
@@ -424,30 +410,24 @@ class InMessageAlertHook(MethodHook):
         try:
             if _plugin_instance and not _plugin_instance.get_setting("enable_in_message_translation", False):
                 return
-            debug_log(f"[IN-MSG] showAlert fired, arg count={len(p.args)}, types={[type(a).__name__ for a in p.args]}")
             if len(p.args) < 7:
-                debug_log("[IN-MSG] arg count below expected threshold (7), skipping - native dialog will show instead")
                 return
             
             f = p.args[1]
             if not isinstance(f, _in_message_classes['CA']):
-                debug_log("[IN-MSG] args[1] is not a ChatActivity, skipping")
                 return
             
             obj = get_private_field(f, "selectedObject")
             if not obj:
-                debug_log("[IN-MSG] no selectedObject found, skipping")
                 return
             
             txt = next((a for a in p.args if isinstance(a, str) and len(a) > 5), None)
             if not txt:
                 txt = _in_message_classes['CU'].getInstance().getMessageText(obj, None)
             if not txt:
-                debug_log("[IN-MSG] no text resolved for message, skipping")
                 return
             
             lang = _in_message_classes['TA'].getToLanguage()
-            debug_log(f"[IN-MSG] submitting translation, {len(str(txt))} chars -> {lang}, interactive pool active={_interactive_executor._work_queue.qsize()}")
             _interactive_executor.submit(_translate_and_apply_in_message, str(txt), lang, obj, f)
             self.pending = True
         except Exception as e:
@@ -495,12 +475,11 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
     _global_generation = 0
 
     def on_plugin_load(self):
-        global _plugin_instance, _debug_enabled
+        global _plugin_instance
         _plugin_instance = self
         self._in_message_hooks = []
         self._premium_unhooks = []
         self._premium_hooked = False
-        _debug_enabled = self.get_setting("enable_debug_logging", False)
 
         if not JAVA_CLASSES_FOUND:
             BulletinHelper.show_error("Translator: Failed to load (core classes not found).")
@@ -598,19 +577,15 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
 
         message_key = f"live_{msg.id}_{dialog_id}"
         if message_key in in_progress_messages:
-            debug_log(f"[LIVE] msg {message_key} already in progress, skipping duplicate")
             return
         _begin_tracking(message_key, msg.id)
 
-        debug_log(f"[LIVE] queuing msg {message_key}, bulk pool queue size: {_executor._work_queue.qsize()}")
         _executor.submit(self._translate_live_message, text, message_key, target_lang, msg)
 
     def _translate_live_message(self, text, message_key, target_lang, msg):
-        start = time.time()
         try:
             translated = _cached_translate(text, target_lang)
             if translated:
-                debug_log(f"[LIVE] msg {message_key} translated in {time.time() - start:.2f}s")
                 def ui_update():
                     try:
                         msg.translatedText = _create_text_with_entities(translated)
@@ -620,8 +595,6 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
                         log(f"[LIVE] Failed to apply translation: {e}")
 
                 run_on_ui_thread(ui_update)
-            else:
-                debug_log(f"[LIVE] msg {message_key} translation returned nothing after {time.time() - start:.2f}s")
         except Exception as e:
             log(f"[LIVE] translation failed: {e}")
         finally:
@@ -637,11 +610,6 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
 
     def _on_in_message_toggle(self, value):
         self.set_setting("enable_in_message_translation", value, reload_settings=True)
-
-    def _on_debug_toggle(self, value):
-        global _debug_enabled
-        _debug_enabled = value
-        self.set_setting("enable_debug_logging", value, reload_settings=True)
 
     def create_settings(self):
         current_lang_code = _get_telegram_target_language()
@@ -678,16 +646,6 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
             Header(text="Cache Management"),
             Text(text=f"Cache: {entry_count} entries (~{cache_size:.1f}KB)", icon="msg_storage"),
             Text(text="Clear Translation Cache", icon="msg_delete", red=True, on_click=_clear_translation_cache_with_native),
-            Divider(),
-            Header(text="Debugging"),
-            Switch(
-                key="enable_debug_logging",
-                text="Debug Logging",
-                default=False,
-                icon="msg_log",
-                on_change=self._on_debug_toggle,
-                subtext="Log detailed timing info for translation requests to help diagnose slow/stuck translations.",
-            ),
             Divider(),
         ]
 
@@ -728,7 +686,6 @@ class TranslateHook(MethodReplacement):
                 return None
             
             _begin_tracking(message_key, message_object.getId())
-            debug_log(f"[CHAT] queuing msg {message_key}, bulk pool queue size: {_executor._work_queue.qsize()}")
             _executor.submit(self._process_translation, original_text, message_key, target_lang, message_object)
         except Exception as e:
             self._handle_error(e, "replace_hooked_method")
@@ -740,14 +697,10 @@ class TranslateHook(MethodReplacement):
         log(f"Translator Error ({context}): {type(e).__name__}: {e}\n{traceback.format_exc()}")
 
     def _process_translation(self, original_text: str, message_key: str, target_lang_code: str, message_object):
-        start = time.time()
         try:
             translated_text = _cached_translate(original_text, target_lang_code)
             if translated_text:
-                debug_log(f"[CHAT] msg {message_key} translated in {time.time() - start:.2f}s")
                 self._store_translation_in_native_storage(message_object, translated_text, target_lang_code)
-            else:
-                debug_log(f"[CHAT] msg {message_key} translation returned nothing after {time.time() - start:.2f}s")
         except Exception as e:
             self._handle_error(e, "_process_translation")
         finally:
