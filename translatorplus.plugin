@@ -246,9 +246,9 @@ def _clear_translation_cache_with_native(view):
 
 
 def is_already_translated(original_text: str, target_lang_code: str) -> bool:
-    if not original_text or len(original_text) < 3:
+    if not original_text or not original_text.strip():
         return True
-    
+
     LANG_CHAR_RANGES = {
         ("zh", "ja", "ko"): [("\u4e00", "\u9fff"), ("\u3040", "\u309f"), ("\u30a0", "\u30ff"), ("\uac00", "\ud7af")],
         ("ru", "uk", "bg"): [("\u0400", "\u04ff")],
@@ -781,6 +781,6 @@ __name__ = "TranslatorPlus"
 __description__ = "Ultra-fast multi-provider translation for Telegram with in-message support"
 __icon__ = "luvztroyicons/1"
 __id__ = "translatorplus"
-__version__ = "1.4.4"
+__version__ = "1.4.5"
 __author__ = "@xwvux"
 __min_version__ = "12.2.10"
