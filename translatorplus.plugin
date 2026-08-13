@@ -8,6 +8,7 @@ import hashlib
 import threading
 from typing import Any, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor
+from collections import OrderedDict
 
 from base_plugin import BasePlugin, MethodReplacement, HookResult, MethodHook
 from client_utils import get_messages_controller, get_last_fragment
@@ -17,8 +18,32 @@ from ui.settings import Header, Divider, Text, Switch
 from hook_utils import get_private_field
 
 _session = None
-_executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="translator_")
-_interactive_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="translator_interactive_")
+_executor = None
+_interactive_executor = None
+
+
+def get_executor() -> ThreadPoolExecutor:
+    global _executor
+    if _executor is None:
+        _executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="translator_")
+    return _executor
+
+
+def get_interactive_executor() -> ThreadPoolExecutor:
+    global _interactive_executor
+    if _interactive_executor is None:
+        _interactive_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="translator_interactive_")
+    return _interactive_executor
+
+
+def shutdown_executors():
+    global _executor, _interactive_executor
+    if _executor is not None:
+        safe_execute(lambda: _executor.shutdown(wait=False), "[EXECUTOR] Failed to shutdown main executor")
+        _executor = None
+    if _interactive_executor is not None:
+        safe_execute(lambda: _interactive_executor.shutdown(wait=False), "[EXECUTOR] Failed to shutdown interactive executor")
+        _interactive_executor = None
 
 CACHE_DIR = os.path.expanduser("~/.exteragram_translatorplus_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -35,8 +60,16 @@ _cache_save_interval = 30
 
 _plugin_instance = None
 
-_in_message_translated = set()
+_in_message_translated = OrderedDict()  # used as an insertion-ordered set, capped in size
+_IN_MESSAGE_TRANSLATED_MAX = 500
 _in_message_classes = {}
+
+
+def _track_in_message_translated(key):
+    _in_message_translated[key] = True
+    _in_message_translated.move_to_end(key)
+    while len(_in_message_translated) > _IN_MESSAGE_TRANSLATED_MAX:
+        _in_message_translated.popitem(last=False)
 
 
 def safe_execute(func: Callable, error_prefix: str = "", default=None):
@@ -64,10 +97,10 @@ def load_cache():
     return _translation_cache
 
 
-def save_cache(cache_data):
+def save_cache(cache_data, force: bool = False):
     global _cache_last_save
     current_time = time.time()
-    if current_time - _cache_last_save < _cache_save_interval:
+    if not force and current_time - _cache_last_save < _cache_save_interval:
         return
     _cache_last_save = current_time
 
@@ -76,6 +109,13 @@ def save_cache(cache_data):
             json.dump(cache_data, f, ensure_ascii=False, indent=2)
 
     safe_execute(_save, "[CACHE] Failed to save cache")
+
+
+def flush_cache():
+    """Force-write the in-memory cache to disk, bypassing the debounce window.
+    Call this on unload so recent translations aren't lost."""
+    if _translation_cache:
+        save_cache(_translation_cache, force=True)
 
 
 def is_online() -> bool:
@@ -130,17 +170,17 @@ def _get_telegram_target_language():
 
 
 _ui_refresh_lock = threading.Lock()
-_ui_refresh_timer = None
+_ui_refresh_timers = {}
 _UI_REFRESH_DEBOUNCE_SECONDS = 0.25
+_UI_REFRESH_PENDING_KEY = "_pending_current_account_"
 
 
 def _post_ui_refresh(account=None):
-    global _ui_refresh_timer
+    timer_key = account if account is not None else _UI_REFRESH_PENDING_KEY
 
     def _do_refresh():
-        global _ui_refresh_timer
         with _ui_refresh_lock:
-            _ui_refresh_timer = None
+            _ui_refresh_timers.pop(timer_key, None)
         try:
             acc = account
             if acc is None:
@@ -162,11 +202,13 @@ def _post_ui_refresh(account=None):
             log(f"[UI] Failed to schedule refresh: {e}")
 
     with _ui_refresh_lock:
-        if _ui_refresh_timer is not None:
-            _ui_refresh_timer.cancel()
-        _ui_refresh_timer = threading.Timer(_UI_REFRESH_DEBOUNCE_SECONDS, _do_refresh)
-        _ui_refresh_timer.daemon = True
-        _ui_refresh_timer.start()
+        existing = _ui_refresh_timers.get(timer_key)
+        if existing is not None:
+            existing.cancel()
+        timer = threading.Timer(_UI_REFRESH_DEBOUNCE_SECONDS, _do_refresh)
+        timer.daemon = True
+        _ui_refresh_timers[timer_key] = timer
+        timer.start()
 
 
 def _get_translate_controller():
@@ -245,15 +287,17 @@ def _clear_translation_cache_with_native(view):
         BulletinHelper.show_error(f"Failed to clear cache: {str(e)}")
 
 
+LANG_CHAR_RANGES = {
+    ("zh", "ja", "ko"): [("\u4e00", "\u9fff"), ("\u3040", "\u309f"), ("\u30a0", "\u30ff"), ("\uac00", "\ud7af")],
+    ("ru", "uk", "bg"): [("\u0400", "\u04ff")],
+    ("el",): [("\u0370", "\u03ff")],
+}
+
+
 def is_already_translated(original_text: str, target_lang_code: str) -> bool:
     if not original_text or not original_text.strip():
         return True
 
-    LANG_CHAR_RANGES = {
-        ("zh", "ja", "ko"): [("\u4e00", "\u9fff"), ("\u3040", "\u309f"), ("\u30a0", "\u30ff"), ("\uac00", "\ud7af")],
-        ("ru", "uk", "bg"): [("\u0400", "\u04ff")],
-    }
-    
     for lang_group, ranges in LANG_CHAR_RANGES.items():
         if target_lang_code in lang_group:
             return any(start <= c <= end for c in original_text for start, end in ranges)
@@ -322,13 +366,16 @@ def _begin_tracking(message_key: str, msg_id: int):
     _set_translation_loading(msg_id, True)
 
 
-def _get_valid_text(message_object) -> Optional[str]:
-    original_text = message_object.messageText
+def _get_valid_text(obj) -> Optional[str]:
+    """Extract usable text from either a wrapped MessageObject (which exposes a
+    computed `messageText`) or a raw TLRPC.Message (which only has `.message`),
+    so both the hook-based and live-prefetch paths see the same fallback logic."""
+    original_text = getattr(obj, "messageText", None)
     if not original_text or not isinstance(original_text, str) or not original_text.strip():
-        mo = getattr(message_object, "messageOwner", None)
-        if mo and hasattr(mo, "message") and mo.message:
+        mo = getattr(obj, "messageOwner", None) or obj
+        if mo is not None and hasattr(mo, "message") and mo.message:
             original_text = mo.message
-    
+
     if original_text and isinstance(original_text, str) and original_text.strip():
         return original_text
     return None
@@ -364,7 +411,7 @@ def apply_in_message_translation(msg, activity, txt, lang):
         if not is_transcription:
             mo.translatedText = _create_text_with_entities(txt)
             mo.translatedToLanguage = lang
-            _in_message_translated.add((msg.getDialogId(), msg.getId()))
+            _track_in_message_translated((msg.getDialogId(), msg.getId()))
 
         def ui():
             try:
@@ -428,7 +475,7 @@ class InMessageAlertHook(MethodHook):
                 return
             
             lang = _in_message_classes['TA'].getToLanguage()
-            _interactive_executor.submit(_translate_and_apply_in_message, str(txt), lang, obj, f)
+            get_interactive_executor().submit(_translate_and_apply_in_message, str(txt), lang, obj, f)
             self.pending = True
         except Exception as e:
             log(f"[IN-MSG] showAlert hook failed: {e}")
@@ -468,7 +515,12 @@ class LocalPremiumHook:
         self._premium_hooked = True
 
     def premium_unhooking(self):
-        pass
+        if not getattr(self, "_premium_hooked", False):
+            return
+        for unhook in getattr(self, "_premium_unhooks", []):
+            safe_execute(lambda u=unhook: self.unhook_method(u), "[PREMIUM_HOOK] Failed to unhook")
+        self._premium_unhooks = []
+        self._premium_hooked = False
 
 
 class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
@@ -480,6 +532,8 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
         self._in_message_hooks = []
         self._premium_unhooks = []
         self._premium_hooked = False
+        self.translate_hook_instance = None
+        self._translate_unhook = None
 
         if not JAVA_CLASSES_FOUND:
             BulletinHelper.show_error("Translator: Failed to load (core classes not found).")
@@ -500,7 +554,7 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
                 target_method.setAccessible(True)
                 AdvancedTranslatorPlugin._global_generation += 1
                 self.translate_hook_instance = TranslateHook(self, AdvancedTranslatorPlugin._global_generation)
-                self.hook_method(target_method, self.translate_hook_instance)
+                self._translate_unhook = self.hook_method(target_method, self.translate_hook_instance)
                 log("Translator: Successfully found method 'pushToTranslate'.")
             else:
                 BulletinHelper.show_error("Translator: Failed to find the target translation method to hook.")
@@ -533,8 +587,18 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
         _in_message_translated.clear()
         log("[IN-MESSAGE] Hooks disabled")
 
+    def _teardown_translate_hook(self):
+        if getattr(self, "_translate_unhook", None) is not None:
+            self.unhook_method(self._translate_unhook)
+            self._translate_unhook = None
+        self.translate_hook_instance = None
+
     def on_plugin_unload(self):
         self._teardown_in_message_hooks()
+        safe_execute(self._teardown_translate_hook, "[PLUGIN] Failed to unhook translate method")
+        safe_execute(self.premium_unhooking, "[PLUGIN] Failed to unhook premium methods")
+        flush_cache()
+        shutdown_executors()
         log("Unloaded")
 
     def on_update_hook(self, update_name: str, account: int, update: Any) -> HookResult:
@@ -569,18 +633,18 @@ class AdvancedTranslatorPlugin(BasePlugin, LocalPremiumHook):
         if not target_lang:
             return
 
-        text = getattr(msg, "message", None)
-        if not text or not isinstance(text, str) or not text.strip():
+        text = _get_valid_text(msg)
+        if not text:
             return
         if is_already_translated(text, target_lang):
             return
 
-        message_key = f"live_{msg.id}_{dialog_id}"
+        message_key = f"{msg.id}:{dialog_id}"
         if message_key in in_progress_messages:
             return
         _begin_tracking(message_key, msg.id)
 
-        _executor.submit(self._translate_live_message, text, message_key, target_lang, msg)
+        get_executor().submit(self._translate_live_message, text, message_key, target_lang, msg)
 
     def _translate_live_message(self, text, message_key, target_lang, msg):
         try:
@@ -678,7 +742,8 @@ class TranslateHook(MethodReplacement):
             if not original_text or message_object.isOut():
                 return None
             
-            message_key = f"{message_object.getId()}"
+            dialog_id = safe_execute(lambda: message_object.getDialogId(), default=None)
+            message_key = f"{message_object.getId()}:{dialog_id}"
             if message_key in in_progress_messages:
                 return None
             
@@ -686,7 +751,7 @@ class TranslateHook(MethodReplacement):
                 return None
             
             _begin_tracking(message_key, message_object.getId())
-            _executor.submit(self._process_translation, original_text, message_key, target_lang, message_object)
+            get_executor().submit(self._process_translation, original_text, message_key, target_lang, message_object)
         except Exception as e:
             self._handle_error(e, "replace_hooked_method")
         return None
