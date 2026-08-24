@@ -7,7 +7,7 @@ __id__ = "add_to_folder_all_tabs"
 __name__ = "Add To Folder in All Tabs"
 __type__ = "plugin"
 __description__ = "Always show 'Add to Folder' option when selecting chats, even when in other folders"
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 __author__ = "@luvztroy"
 __min_version__ = "12.2.10"
 
@@ -42,7 +42,11 @@ class AddToFolderAllTabsHook(MethodHook):
             selected_dialogs_field.setAccessible(True)
             selected_dialogs = selected_dialogs_field.get(dialogs_activity)
             
-            FiltersListBottomSheetClass = find_class("org.telegram.ui.Components.FiltersListBottomSheet")
+            # FIX: use jclass() (not find_class()) to call a static method -
+            # find_class() returns a raw java.lang.Class reflection object
+            # that can't have its static methods invoked via attribute
+            # access on nagram XF.
+            FiltersListBottomSheetClass = jclass("org.telegram.ui.Components.FiltersListBottomSheet")
             if FiltersListBottomSheetClass:
                 can_add_filters = FiltersListBottomSheetClass.getCanAddDialogFilters(dialogs_activity, selected_dialogs)
                 has_available_folders = can_add_filters is not None and not can_add_filters.isEmpty()
@@ -94,15 +98,25 @@ class EnableAddToFolderAllTabsPlugin(BasePlugin):
             if not DialogsActivityClass:
                 return
             
+            # FIX: DialogsActivityClass is already the java.lang.Class
+            # object returned by find_class(). Calling .getClass() on it
+            # returns the meta-class java.lang.Class instead of
+            # org.telegram.ui.DialogsActivity, which made every
+            # getDeclaredMethod() lookup below fail silently on nagram XF.
+            java_class = DialogsActivityClass
+            
             try:
-                BooleanTYPE = self._get_class("java.lang.Boolean").TYPE
-                updateCountersMethod = DialogsActivityClass.getClass().getDeclaredMethod("updateCounters", BooleanTYPE)
+                # FIX: Boolean.TYPE / Integer.TYPE must come from jclass(),
+                # not find_class() - find_class() returns a raw Class
+                # object with no .TYPE attribute available via Chaquopy.
+                BooleanTYPE = jclass("java.lang.Boolean").TYPE
+                updateCountersMethod = java_class.getDeclaredMethod("updateCounters", BooleanTYPE)
             except:
                 try:
-                    updateCountersMethod = DialogsActivityClass.getClass().getDeclaredMethod("updateCounters")
+                    updateCountersMethod = java_class.getDeclaredMethod("updateCounters")
                 except:
-                    IntegerTYPE = self._get_class("java.lang.Integer").TYPE
-                    updateCountersMethod = DialogsActivityClass.getClass().getDeclaredMethod("updateCounters", IntegerTYPE)
+                    IntegerTYPE = jclass("java.lang.Integer").TYPE
+                    updateCountersMethod = java_class.getDeclaredMethod("updateCounters", IntegerTYPE)
             
             updateCountersMethod.setAccessible(True)
             
