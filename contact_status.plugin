@@ -498,7 +498,7 @@ class ContactStatusInProfilePlugin(BasePlugin):
             if not ProfileActivity:
                 return
 
-            java_class = ProfileActivity.getClass()
+            java_class = ProfileActivity  # FIX: ProfileActivity is already the Class object; .getClass() returned java.lang.Class instead
 
             try:
                 update_rows = java_class.getDeclaredMethod("updateRowsIds")
@@ -519,7 +519,7 @@ class ContactStatusInProfilePlugin(BasePlugin):
                 int_type = jclass("java.lang.Integer").TYPE
                 view_holder = jclass("androidx.recyclerview.widget.RecyclerView$ViewHolder")
 
-                list_adapter_class = ListAdapter.getClass()
+                list_adapter_class = ListAdapter  # FIX: ListAdapter is already the Class object; .getClass() returned java.lang.Class instead
 
                 get_item_view_type = list_adapter_class.getDeclaredMethod("getItemViewType", int_type)
                 get_item_view_type.setAccessible(True)
