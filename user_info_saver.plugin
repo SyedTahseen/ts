@@ -325,6 +325,130 @@ def restore_backup(path: str) -> tuple[bool, str]:
     return True, f"Restored {len(obj)} saved peers from backup."
 
 
+_RESTORE_REQUEST_CODE = 0x4243
+_activity_hook_installed = False
+
+
+def _find_declaring_method(clazz, method_name: str):
+    current = clazz
+    while current is not None:
+        matches = [m for m in current.getDeclaredMethods() if m.getName() == method_name]
+        if matches:
+            return current, max(matches, key=lambda m: m.getParameterCount())
+        current = current.getSuperclass()
+    return None, None
+
+
+def _ensure_activity_result_hook(plugin_instance, activity) -> bool:
+    global _activity_hook_installed
+    if _activity_hook_installed:
+        return True
+
+    try:
+        declaring_clazz, method = _find_declaring_method(activity.getClass(), "onActivityResult")
+        if method is None:
+            logger.warning("Could not find onActivityResult in the activity's class hierarchy.")
+            return False
+
+        method.setAccessible(True)
+        plugin_instance.hook_method(method, _ActivityResultHook())
+        _activity_hook_installed = True
+        logger.info(f"Hooked onActivityResult on {declaring_clazz.getName()}")
+        return True
+    except Exception:
+        logger.error("Failed to hook onActivityResult:", exc_info=True)
+        return False
+
+
+def _read_input_stream(input_stream) -> bytes:
+    ByteArrayOutputStream = jclass("java.io.ByteArrayOutputStream")
+    baos = ByteArrayOutputStream()
+    buf = bytearray(8192)
+    while True:
+        n = input_stream.read(buf, 0, len(buf))
+        if n == -1:
+            break
+        baos.write(buf, 0, n)
+    input_stream.close()
+    return bytes(b & 0xFF for b in baos.toByteArray())
+
+
+def _query_display_name(resolver, uri) -> Optional[str]:
+    try:
+        cursor = resolver.query(uri, None, None, None, None)
+        if cursor is None:
+            return None
+        try:
+            if cursor.moveToFirst():
+                idx = cursor.getColumnIndex("_display_name")
+                if idx >= 0:
+                    return cursor.getString(idx)
+        finally:
+            cursor.close()
+    except Exception:
+        return None
+    return None
+
+
+def _on_uri_picked(uri):
+    fragment = get_last_fragment()
+    activity = fragment.getParentActivity() if fragment else None
+    if not activity:
+        return
+
+    try:
+        resolver = activity.getContentResolver()
+        input_stream = resolver.openInputStream(uri)
+        raw = _read_input_stream(input_stream)
+    except Exception:
+        logger.error("Failed to read picked document:", exc_info=True)
+        BulletinHelper.show_error("Could not read the selected file.", fragment)
+        return
+
+    obj = _decode_backup_bytes(raw)
+    if obj is None:
+        BulletinHelper.show_error("The selected file isn't a valid backup.", fragment)
+        return
+
+    label = _query_display_name(resolver, uri) or "selected file"
+
+    def on_confirm(bld: AlertDialogBuilder, which: int):
+        bld.dismiss()
+        storage.content = obj
+        storage.write()
+        logger.info(f"Restored backup from system picker ({len(obj)} entries).")
+        BulletinHelper.show_success(f"Restored {len(obj)} saved peers from backup.", fragment)
+
+    confirm = AlertDialogBuilder(activity)
+    confirm.set_title("Restore Backup?")
+    confirm.set_message(f"This will overwrite your current saved data with:\n{label}")
+    confirm.set_positive_button("Restore", on_confirm)
+    confirm.set_negative_button("Cancel", lambda b, w: b.dismiss())
+    confirm.create()
+    confirm.make_button_red(AlertDialogBuilder.BUTTON_POSITIVE)
+    confirm.show()
+
+
+class _ActivityResultHook(MethodHook):
+    def before_hooked_method(self, param):
+        try:
+            request_code = param.args[0]
+            if request_code != _RESTORE_REQUEST_CODE:
+                return
+            result_code = param.args[1]
+            if result_code != -1:
+                return
+            data_intent = param.args[2]
+            if not data_intent:
+                return
+            uri = data_intent.getData()
+            if not uri:
+                return
+            _on_uri_picked(uri)
+        except Exception:
+            logger.error("Activity result hook failed:", exc_info=True)
+
+
 class UserInfoSaver(BasePlugin):
     def on_plugin_load(self):
         clazz = jclass("org.telegram.messenger.MessagesController").getClass()
@@ -345,7 +469,38 @@ class UserInfoSaver(BasePlugin):
                 icon="msg_restore",
                 on_click=self._on_restore_click,
             ),
+            Text(
+                text="Restore from Device Storage",
+                subtext="Use the system file picker - works even for files owned by other apps.",
+                icon="msg_folders",
+                on_click=self._on_restore_from_picker_click,
+            ),
         ]
+
+    def _on_restore_from_picker_click(self, view):
+        fragment = get_last_fragment()
+        if not fragment:
+            logger.warning("Cannot open system picker, no current fragment.")
+            return
+
+        activity = fragment.getParentActivity()
+        if not activity:
+            logger.warning("Cannot open system picker, no parent activity.")
+            return
+
+        if not _ensure_activity_result_hook(self, activity):
+            BulletinHelper.show_error("Could not set up the file picker on this build.", fragment)
+            return
+
+        try:
+            Intent = jclass("android.content.Intent")
+            intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            intent.setType("*/*")
+            activity.startActivityForResult(intent, _RESTORE_REQUEST_CODE)
+        except Exception:
+            logger.error("Failed to launch system picker:", exc_info=True)
+            BulletinHelper.show_error("Could not open the file picker.", fragment)
 
     def _on_restore_click(self, view):
         fragment = get_last_fragment()
