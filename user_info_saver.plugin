@@ -236,60 +236,6 @@ storage = JsonCacheFile("zwyUserInfoSaver__peer_settings_storage", default={}, c
 logger = build_log(__name__)
 
 
-def _backup_search_dirs() -> list[str]:
-    dirs = [os.path.join(file_utils.get_plugins_dir(), "cache")]
-    try:
-        docs_dir = file_utils.get_documents_dir()
-        if docs_dir:
-            dirs.append(docs_dir)
-    except Exception:
-        logger.error("Failed to resolve documents dir:", exc_info=True)
-    return dirs
-
-
-def _looks_like_zlib(path: str) -> bool:
-    try:
-        with open(path, "rb") as f:
-            head = f.read(2)
-    except Exception:
-        return False
-    if len(head) < 2:
-        return False
-    return (head[0] & 0x0F) == 8 and (head[0] * 256 + head[1]) % 31 == 0
-
-
-def find_backup_candidates() -> list[str]:
-    candidates: list[str] = []
-    seen = set()
-
-    for directory in _backup_search_dirs():
-        try:
-            found = file_utils.list_dir(path=directory, include_files=True, include_dirs=False) or []
-        except Exception:
-            found = []
-
-        for f in found:
-            if f not in seen and _looks_like_zlib(f):
-                seen.add(f)
-                candidates.append(f)
-
-    def _norm(p: str) -> str:
-        return os.path.normcase(os.path.realpath(p))
-
-    active_norm = _norm(storage.path)
-    active_dir_norm = _norm(os.path.dirname(storage.path))
-    active_name_norm = os.path.normcase(os.path.basename(storage.path))
-
-    result = []
-    for c in candidates:
-        if _norm(c) == active_norm:
-            continue
-        if _norm(os.path.dirname(c)) == active_dir_norm and os.path.normcase(os.path.basename(c)) == active_name_norm:
-            continue
-        result.append(c)
-    return result
-
-
 def _decode_backup_bytes(raw: bytes) -> Optional[dict]:
     if not raw or len(raw) < 2:
         return None
@@ -310,22 +256,8 @@ def _decode_backup_bytes(raw: bytes) -> Optional[dict]:
     return obj if isinstance(obj, dict) else None
 
 
-def restore_backup(path: str) -> tuple[bool, str]:
-    raw = file_utils.read_file_bytes(path)
-    if raw is None:
-        return False, "Could not read the selected file."
-
-    obj = _decode_backup_bytes(raw)
-    if obj is None:
-        return False, "The selected file isn't a valid backup."
-
-    storage.content = obj
-    storage.write()
-    logger.info(f"Restored backup from '{path}' ({len(obj)} entries).")
-    return True, f"Restored {len(obj)} saved peers from backup."
-
-
 _RESTORE_REQUEST_CODE = 0x4243
+_BACKUP_REQUEST_CODE = 0x4244
 _activity_hook_installed = False
 
 
@@ -371,6 +303,12 @@ def _read_input_stream(input_stream) -> bytes:
         baos.write(buf, 0, n)
     input_stream.close()
     return bytes(b & 0xFF for b in baos.toByteArray())
+
+
+def _write_output_stream(output_stream, data: bytes):
+    output_stream.write(data)
+    output_stream.flush()
+    output_stream.close()
 
 
 def _query_display_name(resolver, uri) -> Optional[str]:
@@ -429,11 +367,33 @@ def _on_uri_picked(uri):
     confirm.show()
 
 
+def _on_backup_uri_picked(uri):
+    fragment = get_last_fragment()
+    activity = fragment.getParentActivity() if fragment else None
+    if not activity:
+        return
+
+    try:
+        data = json.dumps(storage.content).encode("utf-8")
+        data = zlib.compress(data, level=6)
+
+        resolver = activity.getContentResolver()
+        output_stream = resolver.openOutputStream(uri)
+        _write_output_stream(output_stream, data)
+    except Exception:
+        logger.error("Failed to write backup:", exc_info=True)
+        BulletinHelper.show_error("Could not save the backup file.", fragment)
+        return
+
+    logger.info(f"Saved backup ({len(storage.content)} entries).")
+    BulletinHelper.show_success(f"Saved backup with {len(storage.content)} peers.", fragment)
+
+
 class _ActivityResultHook(MethodHook):
     def before_hooked_method(self, param):
         try:
             request_code = param.args[0]
-            if request_code != _RESTORE_REQUEST_CODE:
+            if request_code not in (_RESTORE_REQUEST_CODE, _BACKUP_REQUEST_CODE):
                 return
             result_code = param.args[1]
             if result_code != -1:
@@ -444,7 +404,10 @@ class _ActivityResultHook(MethodHook):
             uri = data_intent.getData()
             if not uri:
                 return
-            _on_uri_picked(uri)
+            if request_code == _RESTORE_REQUEST_CODE:
+                _on_uri_picked(uri)
+            else:
+                _on_backup_uri_picked(uri)
         except Exception:
             logger.error("Activity result hook failed:", exc_info=True)
 
@@ -464,20 +427,46 @@ class UserInfoSaver(BasePlugin):
         return [
             Header(text="Backup"),
             Text(
-                text="Restore from Backup",
-                subtext="Pick a previously saved backup file and restore it.",
-                icon="msg_restore",
-                on_click=self._on_restore_click,
+                text="Create Backup",
+                subtext="Save your data to a file you choose on your device.",
+                icon="msg_download",
+                on_click=self._on_backup_click,
             ),
             Text(
-                text="Restore from Device Storage",
-                subtext="Use the system file picker - works even for files owned by other apps.",
+                text="Restore from Backup",
+                subtext="Pick a previously saved backup file and restore it.",
                 icon="msg_folders",
-                on_click=self._on_restore_from_picker_click,
+                on_click=self._on_restore_click,
             ),
         ]
 
-    def _on_restore_from_picker_click(self, view):
+    def _on_backup_click(self, view):
+        fragment = get_last_fragment()
+        if not fragment:
+            logger.warning("Cannot open system picker, no current fragment.")
+            return
+
+        activity = fragment.getParentActivity()
+        if not activity:
+            logger.warning("Cannot open system picker, no parent activity.")
+            return
+
+        if not _ensure_activity_result_hook(self, activity):
+            BulletinHelper.show_error("Could not set up the file picker on this build.", fragment)
+            return
+
+        try:
+            Intent = jclass("android.content.Intent")
+            intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            intent.setType("application/octet-stream")
+            intent.putExtra(Intent.EXTRA_TITLE, "user_info_saver_backup.bin")
+            activity.startActivityForResult(intent, _BACKUP_REQUEST_CODE)
+        except Exception:
+            logger.error("Failed to launch system picker:", exc_info=True)
+            BulletinHelper.show_error("Could not open the file picker.", fragment)
+
+    def _on_restore_click(self, view):
         fragment = get_last_fragment()
         if not fragment:
             logger.warning("Cannot open system picker, no current fragment.")
@@ -501,53 +490,3 @@ class UserInfoSaver(BasePlugin):
         except Exception:
             logger.error("Failed to launch system picker:", exc_info=True)
             BulletinHelper.show_error("Could not open the file picker.", fragment)
-
-    def _on_restore_click(self, view):
-        fragment = get_last_fragment()
-        if not fragment:
-            logger.warning("Cannot show restore dialog, no current fragment.")
-            return
-
-        activity = fragment.getParentActivity()
-        if not activity:
-            logger.warning("Cannot show restore dialog, no parent activity.")
-            return
-
-        candidates = find_backup_candidates()
-        if not candidates:
-            BulletinHelper.show_error(
-                "No backup files found in the plugin cache or Documents folder.", fragment
-            )
-            return
-
-        labels = [os.path.basename(p) for p in candidates]
-
-        def on_pick(bld: AlertDialogBuilder, which: int):
-            bld.dismiss()
-            self._confirm_restore(candidates[which], activity, fragment)
-
-        picker = AlertDialogBuilder(activity)
-        picker.set_title("Select Backup File")
-        picker.set_items(labels, on_pick)
-        picker.set_negative_button("Cancel", lambda b, w: b.dismiss())
-        picker.show()
-
-    def _confirm_restore(self, path: str, activity, fragment):
-        def on_confirm(bld: AlertDialogBuilder, which: int):
-            bld.dismiss()
-            ok, message = restore_backup(path)
-            if ok:
-                BulletinHelper.show_success(message, fragment)
-            else:
-                BulletinHelper.show_error(message, fragment)
-
-        confirm = AlertDialogBuilder(activity)
-        confirm.set_title("Restore Backup?")
-        confirm.set_message(
-            f"This will overwrite your current saved data with:\n{os.path.basename(path)}"
-        )
-        confirm.set_positive_button("Restore", on_confirm)
-        confirm.set_negative_button("Cancel", lambda b, w: b.dismiss())
-        confirm.create()
-        confirm.make_button_red(AlertDialogBuilder.BUTTON_POSITIVE)
-        confirm.show()
