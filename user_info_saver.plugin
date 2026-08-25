@@ -242,12 +242,14 @@ class LoadPeerSettings(MethodReplacement):
 
 PRECIOUS_FIELDS = ("registration_month", "phone_country", "name_change_date", "photo_change_date")
 
-storage = JsonCacheFile("user.json", default={}, compress=False)
+storage = JsonCacheFile("zwyUserInfoSaver__peer_settings_storage", default={}, compress=True)
 logger = build_log(__name__)
 
 # --- Backup restore helpers -------------------------------------------------
-
-_LEGACY_BACKUP_NAME = "zwyUserInfoSaver__peer_settings_storage"
+#
+# Restoring writes through storage.write(), so the file on disk keeps using
+# whatever format storage already uses (zlib-compressed, matching the
+# original behavior) - no separate .json file is created.
 
 
 def _backup_search_dirs() -> list[str]:
@@ -262,13 +264,18 @@ def _backup_search_dirs() -> list[str]:
 
 
 def find_backup_candidates() -> list[str]:
-    """Look for restorable backup files in the plugin cache and Documents dirs."""
+    """Look for restorable backup files in the plugin cache and Documents dirs.
+
+    The original storage file has no extension, so this doesn't filter by
+    extension - it lists files and lets _decode_backup_bytes() validate
+    whether a given file actually looks like a saved-settings dump.
+    """
     candidates: list[str] = []
     seen = set()
 
     for directory in _backup_search_dirs():
         try:
-            found = file_utils.list_dir(path=directory, extensions=[".json"], include_files=True, include_dirs=False) or []
+            found = file_utils.list_dir(path=directory, include_files=True, include_dirs=False) or []
         except Exception:
             found = []
 
@@ -276,11 +283,6 @@ def find_backup_candidates() -> list[str]:
             if f not in seen:
                 seen.add(f)
                 candidates.append(f)
-
-        legacy_path = os.path.join(directory, _LEGACY_BACKUP_NAME)
-        if legacy_path not in seen and os.path.exists(legacy_path):
-            seen.add(legacy_path)
-            candidates.append(legacy_path)
 
     def _norm(p: str) -> str:
         # realpath resolves symlinks (e.g. /sdcard -> /storage/emulated/0 on Android),
@@ -305,6 +307,8 @@ def find_backup_candidates() -> list[str]:
 
 
 def _decode_backup_bytes(raw: bytes) -> Optional[dict]:
+    """Mirrors JsonCacheFile._read()'s auto-detection so both zlib-compressed
+    and plain-JSON backups are accepted."""
     if not raw:
         return None
 
@@ -328,7 +332,9 @@ def _decode_backup_bytes(raw: bytes) -> Optional[dict]:
 
 
 def restore_backup(path: str) -> tuple[bool, str]:
-    """Reads a backup file (compressed or plain JSON) and restores it into storage."""
+    """Reads a backup file (compressed or plain JSON) and restores it into
+    storage. storage.write() then persists it back using storage's own
+    format (zlib-compressed), so no extra .json file is created."""
     raw = file_utils.read_file_bytes(path)
     if raw is None:
         return False, "Could not read the selected file."
