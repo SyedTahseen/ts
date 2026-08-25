@@ -222,7 +222,7 @@ class LoadPeerSettings(MethodReplacement):
 
 PRECIOUS_FIELDS = ("registration_month", "phone_country", "name_change_date", "photo_change_date")
 
-storage = JsonCacheFile("zwyUserInfoSaver__peer_settings_storage", default={}, compress=True)
+storage = JsonCacheFile("users.json", default={}, compress=False)
 logger = build_log(__name__)
 
 
