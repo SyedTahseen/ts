@@ -456,6 +456,8 @@ class UserInfoSaver(BasePlugin):
         logger.info("Loaded.")
 
     def on_plugin_unload(self):
+        global _activity_hook_installed
+        _activity_hook_installed = False
         logger.info("Unloaded.")
 
     def create_settings(self) -> List[Any]:
