@@ -26,13 +26,6 @@ __author__ = "@zwylair"
 __version__ = "1.0.1"
 __min_version__ = "12.0.1"
 
-# Fields that must never be written back onto a TL_peerSettings object via
-# reflection: on some client builds (e.g. nagram XF), 'constructor' is
-# enforced as a Java `final` field, and setattr()'ing it throws
-# "TL_peerSettings.constructor is a final field", which silently aborted
-# get_peer_settings() for EVERY chat that had cached/dumped data - this was
-# why the info box never appeared for users the server stopped returning
-# data for.
 NON_WRITABLE_FIELDS = ("constructor",)
 
 
@@ -175,9 +168,6 @@ def dict_to_peer_settings(dumped: Optional[dict[str, Union[str, int, bool]]]) ->
         try:
             setattr(settings, k, v)
         except Exception:
-            # Some fields may be non-writable on certain client builds
-            # (e.g. 'constructor' is `final` on nagram XF). Skip rather
-            # than let one bad field kill the whole restore.
             logger.debug(f"Skipping non-writable field '{k}'")
     return settings
 
@@ -245,12 +235,6 @@ PRECIOUS_FIELDS = ("registration_month", "phone_country", "name_change_date", "p
 storage = JsonCacheFile("zwyUserInfoSaver__peer_settings_storage", default={}, compress=True)
 logger = build_log(__name__)
 
-# --- Backup restore helpers -------------------------------------------------
-#
-# Restoring writes through storage.write(), so the file on disk keeps using
-# whatever format storage already uses (zlib-compressed, matching the
-# original behavior) - no separate .json file is created.
-
 
 def _backup_search_dirs() -> list[str]:
     dirs = [os.path.join(file_utils.get_plugins_dir(), "cache")]
@@ -263,13 +247,18 @@ def _backup_search_dirs() -> list[str]:
     return dirs
 
 
-def find_backup_candidates() -> list[str]:
-    """Look for restorable backup files in the plugin cache and Documents dirs.
+def _looks_like_zlib(path: str) -> bool:
+    try:
+        with open(path, "rb") as f:
+            head = f.read(2)
+    except Exception:
+        return False
+    if len(head) < 2:
+        return False
+    return (head[0] & 0x0F) == 8 and (head[0] * 256 + head[1]) % 31 == 0
 
-    The original storage file has no extension, so this doesn't filter by
-    extension - it lists files and lets _decode_backup_bytes() validate
-    whether a given file actually looks like a saved-settings dump.
-    """
+
+def find_backup_candidates() -> list[str]:
     candidates: list[str] = []
     seen = set()
 
@@ -280,13 +269,11 @@ def find_backup_candidates() -> list[str]:
             found = []
 
         for f in found:
-            if f not in seen:
+            if f not in seen and _looks_like_zlib(f):
                 seen.add(f)
                 candidates.append(f)
 
     def _norm(p: str) -> str:
-        # realpath resolves symlinks (e.g. /sdcard -> /storage/emulated/0 on Android),
-        # normcase handles case-insensitive filesystems.
         return os.path.normcase(os.path.realpath(p))
 
     active_norm = _norm(storage.path)
@@ -295,9 +282,6 @@ def find_backup_candidates() -> list[str]:
 
     result = []
     for c in candidates:
-        # Exclude by resolved full-path match, and as a fallback, exclude any
-        # file with the same name sitting in the same resolved directory as
-        # the active storage file (covers path-string mismatches).
         if _norm(c) == active_norm:
             continue
         if _norm(os.path.dirname(c)) == active_dir_norm and os.path.normcase(os.path.basename(c)) == active_name_norm:
@@ -307,21 +291,16 @@ def find_backup_candidates() -> list[str]:
 
 
 def _decode_backup_bytes(raw: bytes) -> Optional[dict]:
-    """Mirrors JsonCacheFile._read()'s auto-detection so both zlib-compressed
-    and plain-JSON backups are accepted."""
-    if not raw:
+    if not raw or len(raw) < 2:
         return None
 
-    is_zlib = (
-        len(raw) >= 2
-        and (raw[0] & 0x0F) == 8
-        and (raw[0] * 256 + raw[1]) % 31 == 0
-    )
-    if is_zlib:
-        try:
-            raw = zlib.decompress(raw)
-        except zlib.error:
-            return None
+    if not ((raw[0] & 0x0F) == 8 and (raw[0] * 256 + raw[1]) % 31 == 0):
+        return None
+
+    try:
+        raw = zlib.decompress(raw)
+    except zlib.error:
+        return None
 
     try:
         obj = json.loads(raw.decode("utf-8", errors="replace"))
@@ -332,9 +311,6 @@ def _decode_backup_bytes(raw: bytes) -> Optional[dict]:
 
 
 def restore_backup(path: str) -> tuple[bool, str]:
-    """Reads a backup file (compressed or plain JSON) and restores it into
-    storage. storage.write() then persists it back using storage's own
-    format (zlib-compressed), so no extra .json file is created."""
     raw = file_utils.read_file_bytes(path)
     if raw is None:
         return False, "Could not read the selected file."
