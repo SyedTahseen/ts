@@ -29,6 +29,10 @@ __min_version__ = "12.0.1"
 NON_WRITABLE_FIELDS = ("constructor",)
 
 
+def _is_zlib_stream(raw: bytes) -> bool:
+    return len(raw) >= 2 and (raw[0] & 0x0F) == 8 and (raw[0] * 256 + raw[1]) % 31 == 0
+
+
 class _CustomLogger(logging.Logger):
     def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False, stacklevel=1):
         level_name = logging.getLevelName(level)
@@ -87,11 +91,7 @@ class JsonCacheFile:
             if not raw:
                 return json.loads(json.dumps(self._default))
 
-            is_zlib = (
-                len(raw) >= 2
-                and (raw[0] & 0x0F) == 8
-                and (raw[0] * 256 + raw[1]) % 31 == 0
-            )
+            is_zlib = _is_zlib_stream(raw)
             if is_zlib:
                 try:
                     raw = zlib.decompress(raw)
@@ -237,10 +237,7 @@ logger = build_log(__name__)
 
 
 def _decode_backup_bytes(raw: bytes) -> Optional[dict]:
-    if not raw or len(raw) < 2:
-        return None
-
-    if not ((raw[0] & 0x0F) == 8 and (raw[0] * 256 + raw[1]) % 31 == 0):
+    if not raw or not _is_zlib_stream(raw):
         return None
 
     try:
@@ -295,20 +292,24 @@ def _ensure_activity_result_hook(plugin_instance, activity) -> bool:
 def _read_input_stream(input_stream) -> bytes:
     ByteArrayOutputStream = jclass("java.io.ByteArrayOutputStream")
     baos = ByteArrayOutputStream()
-    buf = bytearray(8192)
-    while True:
-        n = input_stream.read(buf, 0, len(buf))
-        if n == -1:
-            break
-        baos.write(buf, 0, n)
-    input_stream.close()
+    try:
+        buf = bytearray(8192)
+        while True:
+            n = input_stream.read(buf, 0, len(buf))
+            if n == -1:
+                break
+            baos.write(buf, 0, n)
+    finally:
+        input_stream.close()
     return bytes(b & 0xFF for b in baos.toByteArray())
 
 
 def _write_output_stream(output_stream, data: bytes):
-    output_stream.write(data)
-    output_stream.flush()
-    output_stream.close()
+    try:
+        output_stream.write(data)
+        output_stream.flush()
+    finally:
+        output_stream.close()
 
 
 def _query_display_name(resolver, uri) -> Optional[str]:
@@ -412,6 +413,40 @@ class _ActivityResultHook(MethodHook):
             logger.error("Activity result hook failed:", exc_info=True)
 
 
+def _launch_document_picker(
+    plugin_instance,
+    action_name: str,
+    mime_type: str,
+    request_code: int,
+    extra_title: Optional[str] = None,
+) -> None:
+    fragment = get_last_fragment()
+    if not fragment:
+        logger.warning("Cannot open system picker, no current fragment.")
+        return
+
+    activity = fragment.getParentActivity()
+    if not activity:
+        logger.warning("Cannot open system picker, no parent activity.")
+        return
+
+    if not _ensure_activity_result_hook(plugin_instance, activity):
+        BulletinHelper.show_error("Could not set up the file picker on this build.", fragment)
+        return
+
+    try:
+        Intent = jclass("android.content.Intent")
+        intent = Intent(getattr(Intent, action_name))
+        intent.addCategory(Intent.CATEGORY_OPENABLE)
+        intent.setType(mime_type)
+        if extra_title:
+            intent.putExtra(Intent.EXTRA_TITLE, extra_title)
+        activity.startActivityForResult(intent, request_code)
+    except Exception:
+        logger.error("Failed to launch system picker:", exc_info=True)
+        BulletinHelper.show_error("Could not open the file picker.", fragment)
+
+
 class UserInfoSaver(BasePlugin):
     def on_plugin_load(self):
         clazz = jclass("org.telegram.messenger.MessagesController").getClass()
@@ -441,52 +476,18 @@ class UserInfoSaver(BasePlugin):
         ]
 
     def _on_backup_click(self, view):
-        fragment = get_last_fragment()
-        if not fragment:
-            logger.warning("Cannot open system picker, no current fragment.")
-            return
-
-        activity = fragment.getParentActivity()
-        if not activity:
-            logger.warning("Cannot open system picker, no parent activity.")
-            return
-
-        if not _ensure_activity_result_hook(self, activity):
-            BulletinHelper.show_error("Could not set up the file picker on this build.", fragment)
-            return
-
-        try:
-            Intent = jclass("android.content.Intent")
-            intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
-            intent.addCategory(Intent.CATEGORY_OPENABLE)
-            intent.setType("application/octet-stream")
-            intent.putExtra(Intent.EXTRA_TITLE, "user_info_saver_backup.backup")
-            activity.startActivityForResult(intent, _BACKUP_REQUEST_CODE)
-        except Exception:
-            logger.error("Failed to launch system picker:", exc_info=True)
-            BulletinHelper.show_error("Could not open the file picker.", fragment)
+        _launch_document_picker(
+            self,
+            action_name="ACTION_CREATE_DOCUMENT",
+            mime_type="application/octet-stream",
+            request_code=_BACKUP_REQUEST_CODE,
+            extra_title="user_info_saver_backup.backup",
+        )
 
     def _on_restore_click(self, view):
-        fragment = get_last_fragment()
-        if not fragment:
-            logger.warning("Cannot open system picker, no current fragment.")
-            return
-
-        activity = fragment.getParentActivity()
-        if not activity:
-            logger.warning("Cannot open system picker, no parent activity.")
-            return
-
-        if not _ensure_activity_result_hook(self, activity):
-            BulletinHelper.show_error("Could not set up the file picker on this build.", fragment)
-            return
-
-        try:
-            Intent = jclass("android.content.Intent")
-            intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
-            intent.addCategory(Intent.CATEGORY_OPENABLE)
-            intent.setType("*/*")
-            activity.startActivityForResult(intent, _RESTORE_REQUEST_CODE)
-        except Exception:
-            logger.error("Failed to launch system picker:", exc_info=True)
-            BulletinHelper.show_error("Could not open the file picker.", fragment)
+        _launch_document_picker(
+            self,
+            action_name="ACTION_OPEN_DOCUMENT",
+            mime_type="*/*",
+            request_code=_RESTORE_REQUEST_CODE,
+        )
