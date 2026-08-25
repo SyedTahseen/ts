@@ -2,13 +2,16 @@ import os
 import json
 import zlib
 import logging
-from typing import Union, Optional
+from typing import Any, List, Union, Optional
 
 import file_utils
 from base_plugin import BasePlugin, MethodReplacement, MethodHook
 from hook_utils import get_private_field
-from client_utils import get_messages_controller
+from client_utils import get_messages_controller, get_last_fragment
 from android_utils import log as _internal_log
+from ui.settings import Header, Text
+from ui.alert import AlertDialogBuilder
+from ui.bulletin import BulletinHelper
 
 from java import jclass
 from org.telegram.tgnet import TLRPC
@@ -222,8 +225,87 @@ class LoadPeerSettings(MethodReplacement):
 
 PRECIOUS_FIELDS = ("registration_month", "phone_country", "name_change_date", "photo_change_date")
 
-storage = JsonCacheFile("users.json", default={}, compress=False)
+storage = JsonCacheFile("user.json", default={}, compress=False)
 logger = build_log(__name__)
+
+# --- Backup restore helpers -------------------------------------------------
+
+_LEGACY_BACKUP_NAME = "zwyUserInfoSaver__peer_settings_storage"
+
+
+def _backup_search_dirs() -> list[str]:
+    dirs = [os.path.join(file_utils.get_plugins_dir(), "cache")]
+    try:
+        docs_dir = file_utils.get_documents_dir()
+        if docs_dir:
+            dirs.append(docs_dir)
+    except Exception:
+        logger.error("Failed to resolve documents dir:", exc_info=True)
+    return dirs
+
+
+def find_backup_candidates() -> list[str]:
+    """Look for restorable backup files in the plugin cache and Documents dirs."""
+    candidates: list[str] = []
+    seen = set()
+
+    for directory in _backup_search_dirs():
+        try:
+            found = file_utils.list_dir(path=directory, extensions=[".json"], include_files=True, include_dirs=False) or []
+        except Exception:
+            found = []
+
+        for f in found:
+            if f not in seen:
+                seen.add(f)
+                candidates.append(f)
+
+        legacy_path = os.path.join(directory, _LEGACY_BACKUP_NAME)
+        if legacy_path not in seen and os.path.exists(legacy_path):
+            seen.add(legacy_path)
+            candidates.append(legacy_path)
+
+    active_path = os.path.abspath(storage.path)
+    return [c for c in candidates if os.path.abspath(c) != active_path]
+
+
+def _decode_backup_bytes(raw: bytes) -> Optional[dict]:
+    if not raw:
+        return None
+
+    is_zlib = (
+        len(raw) >= 2
+        and (raw[0] & 0x0F) == 8
+        and (raw[0] * 256 + raw[1]) % 31 == 0
+    )
+    if is_zlib:
+        try:
+            raw = zlib.decompress(raw)
+        except zlib.error:
+            return None
+
+    try:
+        obj = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+
+    return obj if isinstance(obj, dict) else None
+
+
+def restore_backup(path: str) -> tuple[bool, str]:
+    """Reads a backup file (compressed or plain JSON) and restores it into storage."""
+    raw = file_utils.read_file_bytes(path)
+    if raw is None:
+        return False, "Could not read the selected file."
+
+    obj = _decode_backup_bytes(raw)
+    if obj is None:
+        return False, "The selected file isn't a valid backup."
+
+    storage.content = obj
+    storage.write()
+    logger.info(f"Restored backup from '{path}' ({len(obj)} entries).")
+    return True, f"Restored {len(obj)} saved peers from backup."
 
 
 class UserInfoSaver(BasePlugin):
@@ -236,3 +318,64 @@ class UserInfoSaver(BasePlugin):
 
     def on_plugin_unload(self):
         logger.info("Unloaded.")
+
+    def create_settings(self) -> List[Any]:
+        return [
+            Header(text="Backup"),
+            Text(
+                text="Restore from Backup",
+                subtext="Pick a previously saved backup file and restore it.",
+                icon="msg_restore",
+                on_click=self._on_restore_click,
+            ),
+        ]
+
+    def _on_restore_click(self, view):
+        fragment = get_last_fragment()
+        if not fragment:
+            logger.warning("Cannot show restore dialog, no current fragment.")
+            return
+
+        activity = fragment.getParentActivity()
+        if not activity:
+            logger.warning("Cannot show restore dialog, no parent activity.")
+            return
+
+        candidates = find_backup_candidates()
+        if not candidates:
+            BulletinHelper.show_error(
+                "No backup files found in the plugin cache or Documents folder.", fragment
+            )
+            return
+
+        labels = [os.path.basename(p) for p in candidates]
+
+        def on_pick(bld: AlertDialogBuilder, which: int):
+            bld.dismiss()
+            self._confirm_restore(candidates[which], activity, fragment)
+
+        picker = AlertDialogBuilder(activity)
+        picker.set_title("Select Backup File")
+        picker.set_items(labels, on_pick)
+        picker.set_negative_button("Cancel", lambda b, w: b.dismiss())
+        picker.show()
+
+    def _confirm_restore(self, path: str, activity, fragment):
+        def on_confirm(bld: AlertDialogBuilder, which: int):
+            bld.dismiss()
+            ok, message = restore_backup(path)
+            if ok:
+                BulletinHelper.show_success(message, fragment)
+            else:
+                BulletinHelper.show_error(message, fragment)
+
+        confirm = AlertDialogBuilder(activity)
+        confirm.set_title("Restore Backup?")
+        confirm.set_message(
+            f"This will overwrite your current saved data with:\n{os.path.basename(path)}"
+        )
+        confirm.set_positive_button("Restore", on_confirm)
+        confirm.set_negative_button("Cancel", lambda b, w: b.dismiss())
+        confirm.create()
+        confirm.make_button_red(AlertDialogBuilder.BUTTON_POSITIVE)
+        confirm.show()
