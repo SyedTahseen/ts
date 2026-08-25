@@ -26,6 +26,15 @@ __author__ = "@zwylair"
 __version__ = "1.0.1"
 __min_version__ = "12.0.1"
 
+# Fields that must never be written back onto a TL_peerSettings object via
+# reflection: on some client builds (e.g. nagram XF), 'constructor' is
+# enforced as a Java `final` field, and setattr()'ing it throws
+# "TL_peerSettings.constructor is a final field", which silently aborted
+# get_peer_settings() for EVERY chat that had cached/dumped data - this was
+# why the info box never appeared for users the server stopped returning
+# data for.
+NON_WRITABLE_FIELDS = ("constructor",)
+
 
 class _CustomLogger(logging.Logger):
     def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False, stacklevel=1):
@@ -149,7 +158,7 @@ def peer_settings_to_dict(settings: Optional[TLRPC.TL_peerSettings]) -> Optional
     data = {}
     for field in settings.getClass().getFields():
         key: str = field.getName()
-        if not key.islower() or key.startswith("_"):
+        if not key.islower() or key.startswith("_") or key in NON_WRITABLE_FIELDS:
             continue
         data[key] = field.get(settings)
     return data
@@ -161,7 +170,15 @@ def dict_to_peer_settings(dumped: Optional[dict[str, Union[str, int, bool]]]) ->
 
     settings = TLRPC.TL_peerSettings()
     for k, v in dumped.items():
-        setattr(settings, k, v)
+        if k in NON_WRITABLE_FIELDS:
+            continue
+        try:
+            setattr(settings, k, v)
+        except Exception:
+            # Some fields may be non-writable on certain client builds
+            # (e.g. 'constructor' is `final` on nagram XF). Skip rather
+            # than let one bad field kill the whole restore.
+            logger.debug(f"Skipping non-writable field '{k}'")
     return settings
 
 
