@@ -460,7 +460,7 @@ class UserInfoSaver(BasePlugin):
             intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
             intent.addCategory(Intent.CATEGORY_OPENABLE)
             intent.setType("application/octet-stream")
-            intent.putExtra(Intent.EXTRA_TITLE, "user_info_saver_backup.bin")
+            intent.putExtra(Intent.EXTRA_TITLE, "user_info_saver_backup.backup")
             activity.startActivityForResult(intent, _BACKUP_REQUEST_CODE)
         except Exception:
             logger.error("Failed to launch system picker:", exc_info=True)
