@@ -265,8 +265,26 @@ def find_backup_candidates() -> list[str]:
             seen.add(legacy_path)
             candidates.append(legacy_path)
 
-    active_path = os.path.abspath(storage.path)
-    return [c for c in candidates if os.path.abspath(c) != active_path]
+    def _norm(p: str) -> str:
+        # realpath resolves symlinks (e.g. /sdcard -> /storage/emulated/0 on Android),
+        # normcase handles case-insensitive filesystems.
+        return os.path.normcase(os.path.realpath(p))
+
+    active_norm = _norm(storage.path)
+    active_dir_norm = _norm(os.path.dirname(storage.path))
+    active_name_norm = os.path.normcase(os.path.basename(storage.path))
+
+    result = []
+    for c in candidates:
+        # Exclude by resolved full-path match, and as a fallback, exclude any
+        # file with the same name sitting in the same resolved directory as
+        # the active storage file (covers path-string mismatches).
+        if _norm(c) == active_norm:
+            continue
+        if _norm(os.path.dirname(c)) == active_dir_norm and os.path.normcase(os.path.basename(c)) == active_name_norm:
+            continue
+        result.append(c)
+    return result
 
 
 def _decode_backup_bytes(raw: bytes) -> Optional[dict]:
