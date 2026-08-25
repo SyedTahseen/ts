@@ -42,6 +42,16 @@ from android.view import View  # type: ignore
 from android.net import Uri  # type: ignore
 
 TRANSCRIPTION_EXECUTOR = concurrent.futures.ThreadPoolExecutor()
+
+try:
+    from java import jclass
+except Exception:
+    jclass = None
+
+
+def _jc(name):
+    return jclass(name) if jclass is not None else find_class(name)
+
 MODELS = ["Universal 3 Pro (AssemblyAI)", "Nova 3 (Deepgram)", "Voxtral Mini (Mistral)", "Gemini Flash (Google)", "Gemini Flash Lite (Google)"]
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -574,24 +584,24 @@ class TranscriberPlugin(BasePlugin):
         try:
             TranscribeButton = find_class("org.telegram.ui.Components.TranscribeButton")
             ChatActivity = find_class("org.telegram.ui.ChatActivity")
-            TLRPC = find_class("org.telegram.tgnet.TLRPC")
+            TL_jsonObject = find_class("org.telegram.tgnet.TLRPC$TL_jsonObject")
 
             jboolean = Boolean.TYPE
             jfloat = Float.TYPE
 
-            onTap = TranscribeButton.getClass().getDeclaredMethod("onTap")
+            onTap = TranscribeButton.getDeclaredMethod("onTap")
             onTap.setAccessible(True)
             self.hook_method(onTap, self.CreateTranscribeButtonHook(self))
 
-            onResume = ChatActivity.getClass().getDeclaredMethod("onResume")
+            onResume = ChatActivity.getDeclaredMethod("onResume")
             onResume.setAccessible(True)
             self.hook_method(onResume, self.ActivityResumeHook(self))
 
-            applyAppConfig = get_messages_controller().getClass().getDeclaredMethod("applyAppConfig", TLRPC.TL_jsonObject)
+            applyAppConfig = get_messages_controller().getClass().getDeclaredMethod("applyAppConfig", TL_jsonObject)
             applyAppConfig.setAccessible(True)
             self.hook_method(applyAppConfig, self.ApplyAppConfigHook(self))
 
-            createMenu = ChatActivity.getClass().getDeclaredMethod("createMenu", View, jboolean, jboolean, jfloat, jfloat, jboolean, jboolean)
+            createMenu = ChatActivity.getDeclaredMethod("createMenu", View, jboolean, jboolean, jfloat, jfloat, jboolean, jboolean)
             createMenu.setAccessible(True)
             self.hook_method(createMenu, self.CreateMenuHook(self))
 
@@ -905,8 +915,8 @@ class TranscriberPlugin(BasePlugin):
             self.show_error_with_button(localization.get_string("error_message_not_voice"))
             return
 
-        TranscribeButton = find_class("org.telegram.ui.Components.TranscribeButton")
-        NotificationCenter = find_class("org.telegram.messenger.NotificationCenter")
+        TranscribeButton = _jc("org.telegram.ui.Components.TranscribeButton")
+        NotificationCenter = _jc("org.telegram.messenger.NotificationCenter")
 
         account = messageObject.currentAccount
         messageId = messageObject.messageOwner.id
@@ -1057,8 +1067,8 @@ class TranscriberPlugin(BasePlugin):
             elif model == 3 or model == 4:
                 uri = "https://t.me/ginqusPlugins/11"
 
-            Browser = find_class("org.telegram.messenger.browser.Browser")
-            LaunchActivity = find_class("org.telegram.ui.LaunchActivity")
+            Browser = _jc("org.telegram.messenger.browser.Browser")
+            LaunchActivity = _jc("org.telegram.ui.LaunchActivity")
             activity = LaunchActivity.instance
             if activity:
                 Browser.openUrl(activity, Uri.parse(uri))
@@ -1111,8 +1121,8 @@ class TranscriberPlugin(BasePlugin):
             builder.set_message(error)
 
             def on_positive_click(bld: AlertDialogBuilder, _: int):
-                ClipData = find_class("android.content.ClipData")
-                Context = find_class("android.content.Context")
+                ClipData = _jc("android.content.ClipData")
+                Context = _jc("android.content.Context")
 
                 clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE)
                 clip = ClipData.newPlainText("error", error)
@@ -1151,8 +1161,7 @@ class TranscriberPlugin(BasePlugin):
                 loading = get_private_field(this, "loading")
                 selectorDrawable = get_private_field(this, "selectorDrawable")
 
-                RippleDrawable = find_class("android.graphics.drawable.RippleDrawable")
-                StateSet = find_class("android.util.StateSet")
+                StateSet = _jc("android.util.StateSet")
 
                 if parent == None:
                     return
@@ -1166,7 +1175,7 @@ class TranscriberPlugin(BasePlugin):
                     processClick = True
                     this.setOpen(False, True)
                     this.setLoading(False, True)
-                if not RippleDrawable is None and isinstance(selectorDrawable, RippleDrawable):
+                if selectorDrawable is not None and selectorDrawable.getClass().getName() == "android.graphics.drawable.RippleDrawable":
                     try:
                         selectorDrawable.setState(StateSet.NOTHING)
                         parent.invalidate()
@@ -1209,11 +1218,11 @@ class TranscriberPlugin(BasePlugin):
                 elif model in (3, 4):
                     token = self.plugin.get_setting("token_gemini", "")
 
-                TranscribeButton = find_class("org.telegram.ui.Components.TranscribeButton")
-                MessagesStorage = find_class("org.telegram.messenger.MessagesStorage")
-                DialogObject = find_class("org.telegram.messenger.DialogObject")
-                MessagesController = find_class("org.telegram.messenger.MessagesController")
-                NotificationCenter = find_class("org.telegram.messenger.NotificationCenter")
+                TranscribeButton = _jc("org.telegram.ui.Components.TranscribeButton")
+                MessagesStorage = _jc("org.telegram.messenger.MessagesStorage")
+                DialogObject = _jc("org.telegram.messenger.DialogObject")
+                MessagesController = _jc("org.telegram.messenger.MessagesController")
+                NotificationCenter = _jc("org.telegram.messenger.NotificationCenter")
 
                 this = param.thisObject
                 transcribeOperationsByDialogPosition = get_private_field(this, "transcribeOperationsByDialogPosition")
@@ -1274,9 +1283,9 @@ class TranscriberPlugin(BasePlugin):
 
         def start_transcription_logic(self, messageObject, this, model: Optional[int] = None):
             try:
-                MessagesStorage = find_class("org.telegram.messenger.MessagesStorage")
-                DialogObject = find_class("org.telegram.messenger.DialogObject")
-                MessagesController = find_class("org.telegram.messenger.MessagesController")
+                MessagesStorage = _jc("org.telegram.messenger.MessagesStorage")
+                DialogObject = _jc("org.telegram.messenger.DialogObject")
+                MessagesController = _jc("org.telegram.messenger.MessagesController")
 
                 if messageObject == None or messageObject.messageOwner == None or not messageObject.isSent():
                     self.plguin.log("[Transcriber] either messageObject is None, messageOwner is None or message isn't sent")
@@ -1370,8 +1379,8 @@ class TranscriberPlugin(BasePlugin):
 
                         finalText = str(text)
 
-                        TranscribeButton = find_class("org.telegram.ui.Components.TranscribeButton")
-                        MessagesStorage = find_class("org.telegram.messenger.MessagesStorage")
+                        TranscribeButton = _jc("org.telegram.ui.Components.TranscribeButton")
+                        MessagesStorage = _jc("org.telegram.messenger.MessagesStorage")
 
                         messageObject.messageOwner.voiceTranscriptionOpen = True
                         messageObject.messageOwner.voiceTranscriptionFinal = True
@@ -1416,7 +1425,7 @@ class TranscriberPlugin(BasePlugin):
 
         def stop_animations(self, this, messageObject, account, messageId):
             try:
-                NotificationCenter = find_class("org.telegram.messenger.NotificationCenter")
+                NotificationCenter = _jc("org.telegram.messenger.NotificationCenter")
 
                 if this:
                     transcribeOperationsByDialogPosition = get_private_field(this, "transcribeOperationsByDialogPosition")
@@ -1438,8 +1447,8 @@ class TranscriberPlugin(BasePlugin):
 
         def get_audio_path(self, msg):
             try:
-                UserConfig = find_class("org.telegram.messenger.UserConfig")
-                FileLoader = find_class("org.telegram.messenger.FileLoader")
+                UserConfig = _jc("org.telegram.messenger.UserConfig")
+                FileLoader = _jc("org.telegram.messenger.FileLoader")
 
                 current_account = UserConfig.selectedAccount
                 file_loader = FileLoader.getInstance(current_account)
@@ -1464,11 +1473,11 @@ class TranscriberPlugin(BasePlugin):
 
         def extract_audio_from_mp4(self, in_path):
             try:
-                MediaExtractor = find_class("android.media.MediaExtractor")
-                MediaMuxer = find_class("android.media.MediaMuxer")
-                MediaFormat = find_class("android.media.MediaFormat")
-                ByteBuffer = find_class("java.nio.ByteBuffer")
-                BufferInfo = find_class("android.media.MediaCodec$BufferInfo")()
+                MediaExtractor = _jc("android.media.MediaExtractor")
+                MediaMuxer = _jc("android.media.MediaMuxer")
+                MediaFormat = _jc("android.media.MediaFormat")
+                ByteBuffer = _jc("java.nio.ByteBuffer")
+                BufferInfo = _jc("android.media.MediaCodec$BufferInfo")()
 
                 extractor = MediaExtractor()
                 muxer = None
