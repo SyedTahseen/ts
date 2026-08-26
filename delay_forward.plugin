@@ -17,7 +17,7 @@ __id__ = "delay_forward"
 __name__ = "Delay FWD"
 __type__ = "plugin"
 __description__ = "Adds a 'Delay Forward' option to the message context menu. Forwards the message/media to each selected chat one at a time, waiting a configurable number of seconds between each recipient."
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __author__ = "@xwvux"
 __min_version__ = "12.2.10"
 
@@ -30,8 +30,8 @@ MAX_DELAY_SECONDS = 3600
 class DelayedForwardPlugin(BasePlugin):
     def __init__(self):
         super().__init__()
-        self._unhook_fill_menu = None
-        self._unhook_process_option = None
+        self._unhook_fill_menu = []
+        self._unhook_process_option = []
         self._last_menu_message = None
         self._menu_option_id = 9998
         self._handler = None
@@ -166,12 +166,39 @@ class DelayedForwardPlugin(BasePlugin):
                     self.messages = messages
                     self.chat_activity = ca
 
-                def didSelectDialogs(self, fragment1, dids, message_text, param, notify, scheduleDate, topicsFragment):
-                    plugin_ref._schedule_delayed_sends(self.chat_activity, self.messages, dids)
-                    fragment1.finishFragment()
+                def didSelectDialogs(self, *args):
+                    # NOTE: current exteraGram/nagram XF's DialogsActivityDelegate
+                    # interface calls this with 8 arguments; the original fixed
+                    # signature here only declared 7 (it's missing one int
+                    # parameter Telegram added between scheduleDate and
+                    # topicsFragment). That arg-count mismatch is what crashed
+                    # the app on selecting recipients. Accepting *args and
+                    # identifying the fragment/dids by shape instead of fixed
+                    # position makes this immune to that (and any future)
+                    # parameter-count change.
+                    fragment1 = None
+                    dids = None
+                    for a in args:
+                        if fragment1 is None and hasattr(a, "finishFragment"):
+                            fragment1 = a
+                        elif dids is None and hasattr(a, "size") and hasattr(a, "get"):
+                            dids = a
+
+                    try:
+                        if dids is not None:
+                            plugin_ref._schedule_delayed_sends(self.chat_activity, self.messages, dids)
+                    except Exception:
+                        pass
+
+                    try:
+                        if fragment1 is not None:
+                            fragment1.finishFragment()
+                    except Exception:
+                        pass
+
                     return True
 
-                def canSelectStories(self):
+                def canSelectStories(self, *args):
                     return False
 
             dialogs_fragment.setDelegate(DelayedForwardDelegate(messages, chat_activity))
@@ -233,18 +260,20 @@ class DelayedForwardPlugin(BasePlugin):
             return "chat"
 
     def _add_delayed_forward_menu_item(self):
+        # NOTE: previously this did `ChatActivity.getClass().getDeclaredMethod(...)`.
+        # `ChatActivity` here is already a Class reference (direct import, not
+        # find_class), so calling `.getClass()` on it does NOT return
+        # ChatActivity's own Class object - the exteraGram SDK docs explicitly
+        # warn against this pattern. Some older client builds tolerated it;
+        # current exteraGram and nagram XF do not, which is what broke/crashed
+        # this plugin on those builds. Fixed by resolving the real class via
+        # find_class(...) and hooking by name (hook_all_methods) instead of a
+        # single hardcoded overload, so a future signature change degrades
+        # gracefully instead of failing to hook at all.
         try:
-            fill_method = ChatActivity.getClass().getDeclaredMethod(
-                "fillMessageMenu",
-                MessageObject,
-                ArrayList,
-                ArrayList,
-                ArrayList
-            )
-            process_method = ChatActivity.getClass().getDeclaredMethod(
-                "processSelectedOption",
-                Integer.TYPE
-            )
+            ChatActivityClass = find_class("org.telegram.ui.ChatActivity")
+            if not ChatActivityClass:
+                return
 
             plugin_ref = self
 
@@ -285,17 +314,18 @@ class DelayedForwardPlugin(BasePlugin):
                     except Exception:
                         pass
 
-            self._unhook_fill_menu = self.hook_method(fill_method, FillMenuHook())
-            self._unhook_process_option = self.hook_method(process_method, ProcessOptionHook())
+            self._unhook_fill_menu = self.hook_all_methods(ChatActivityClass, "fillMessageMenu", FillMenuHook())
+            self._unhook_process_option = self.hook_all_methods(
+                ChatActivityClass, "processSelectedOption", ProcessOptionHook())
         except Exception:
             pass
 
     def _remove_delayed_forward_menu_item(self):
         for attr_name in ("_unhook_fill_menu", "_unhook_process_option"):
-            hook = getattr(self, attr_name, None)
-            if hook:
+            hooks = getattr(self, attr_name, None) or []
+            for hook in hooks:
                 try:
                     self.unhook_method(hook)
                 except Exception:
                     pass
-                setattr(self, attr_name, None)
+            setattr(self, attr_name, [])
