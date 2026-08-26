@@ -23,102 +23,34 @@ import os
 from base_plugin import BasePlugin, MethodHook, MethodReplacement, MenuItemData, MenuItemType
 from client_utils import run_on_queue, get_last_fragment, get_messages_controller
 from hook_utils import find_class, get_private_field, set_private_field
-from com.exteragram.messenger.plugins.ui import PluginSettingsActivity
-from com.exteragram.messenger.plugins import PluginsController
+from com.exteragram.messenger.plugins.ui import PluginSettingsActivity  # type: ignore
+from com.exteragram.messenger.plugins import PluginsController  # type: ignore
 from ui.settings import Header, Input, Text, Selector, Switch
-from org.telegram.messenger import ApplicationLoader
+from org.telegram.messenger import ApplicationLoader  # type: ignore
 from requests.structures import CaseInsensitiveDict
 from android_utils import run_on_ui_thread, log
-from java.util import HashMap, Objects, Locale
-from org.telegram.messenger import R as R_tg
+from java.util import HashMap, Objects, Locale  # type: ignore
+from org.telegram.messenger import R as R_tg  # type: ignore
 from requests.adapters import HTTPAdapter
 from ui.alert import AlertDialogBuilder
 from ui.bulletin import BulletinHelper
 from typing import Dict, Any, Optional
-from java.lang import Boolean, Float
-from android.content import Intent
+from java.lang import Boolean, Float  # type: ignore
+from android.content import Intent  # type: ignore
 from urllib.parse import urlparse
-from android.view import View
-from android.net import Uri
+from android.view import View  # type: ignore
+from android.net import Uri  # type: ignore
 
 TRANSCRIPTION_EXECUTOR = concurrent.futures.ThreadPoolExecutor()
 
 try:
-    from java import jclass as _jclass
+    from java import jclass
 except Exception:
-    _jclass = None
+    jclass = None
 
 
-def _resolve_target_class(class_name: str, expected_method_names):
-    candidates = []
-    try:
-        candidates.append(find_class(class_name))
-    except Exception:
-        pass
-    try:
-        candidates.append(find_class(class_name).getClass())
-    except Exception:
-        pass
-
-    for clazz in candidates:
-        try:
-            names = set(m.getName() for m in clazz.getDeclaredMethods())
-            if any(n in names for n in expected_method_names):
-                return clazz
-        except Exception:
-            continue
-
-    return candidates[0] if candidates else None
-
-
-def _resolve_inner_class(outer_class, outer_class_name: str, inner_name: str):
-    try:
-        return find_class(f"{outer_class_name}${inner_name}")
-    except Exception:
-        pass
-    if outer_class is not None:
-        try:
-            return getattr(outer_class, inner_name)
-        except Exception:
-            pass
-        try:
-            for c in outer_class.getDeclaredClasses():
-                if c.getSimpleName() == inner_name:
-                    return c
-        except Exception:
-            pass
-    return None
-
-
-def _resolve_callable_class(class_name: str):
-    if _jclass is not None:
-        try:
-            return _jclass(class_name)
-        except Exception:
-            pass
-    return find_class(class_name)
-
-
-def _hook_named_method(plugin_instance, clazz, method_name: str, hook_instance, param_types=None):
-    if clazz is None:
-        return False
-    try:
-        if param_types is not None:
-            method = clazz.getDeclaredMethod(method_name, *param_types)
-        else:
-            overloads = [m for m in clazz.getDeclaredMethods() if m.getName() == method_name]
-            method = max(overloads, key=lambda m: m.getParameterCount(), default=None)
-        if method is None:
-            return False
-        method.setAccessible(True)
-        plugin_instance.hook_method(method, hook_instance)
-        return True
-    except Exception as e:
-        try:
-            plugin_instance.log(f"[Transcriber] Failed to hook {method_name}: {e}")
-        except Exception:
-            pass
-        return False
+def _jc(name):
+    return jclass(name) if jclass is not None else find_class(name)
 
 MODELS = ["Universal 3 Pro (AssemblyAI)", "Nova 3 (Deepgram)", "Voxtral Mini (Mistral)", "Gemini Flash (Google)", "Gemini Flash Lite (Google)"]
 USER_AGENTS = [
@@ -159,7 +91,7 @@ DEFAULT_PROMPT_DIARIZATION = """Please produce a verbatim transcript of the audi
 Return the transcript as plain, unedited text."""
 
 
-class LocalizationManager:
+class LocalizationManager:  # Credits: Command List plugin by @mihailkotovski
     strings = {
         "en": {
             "header_settings": "Plugin settings",
@@ -475,7 +407,7 @@ class FakeDNSAdapter(HTTPAdapter):
         return response
 
 
-def get_proxy_list_from_url(url):
+def get_proxy_list_from_url(url):  # Credits: BooruSearch by @ArThirtyFour
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
@@ -493,7 +425,7 @@ def get_proxy_list_from_url(url):
         return []
 
 
-def normalize_proxy_url(raw):
+def normalize_proxy_url(raw):  # Credits: BooruSearch by @ArThirtyFour
     try:
         if raw is None:
             return None
@@ -522,7 +454,7 @@ def normalize_proxy_url(raw):
         return None
 
 
-def check_proxies_parallel(proxies, max_workers=50, max_working=20):
+def check_proxies_parallel(proxies, max_workers=50, max_working=20):  # Credits: BooruSearch by @ArThirtyFour
     working_proxies = []
     working_proxies_lock = threading.Lock()
     stop_search = threading.Event()
@@ -554,7 +486,7 @@ def check_proxies_parallel(proxies, max_workers=50, max_working=20):
     return working_proxies
 
 
-def check_single_proxy(proxy):
+def check_single_proxy(proxy):  # Credits: BooruSearch by @ArThirtyFour
     start_time = time.time()
 
     try:
@@ -574,7 +506,7 @@ def check_single_proxy(proxy):
         return proxy, False, 0
 
 
-def build_requests_proxies(proxy_url):
+def build_requests_proxies(proxy_url):  # Credits: BooruSearch by @ArThirtyFour
     p = normalize_proxy_url(proxy_url)
     if not p:
         return None
@@ -592,7 +524,7 @@ def save_working_proxies_to_file(working_proxies, filename="transcriber_proxies.
         log(f"[Transcriber] Ошибка при сохранении файла: {e}")
 
 
-def get_working_proxy(test_url: str = "https://deepgram.com/", rotate_ua: bool = True):
+def get_working_proxy(test_url: str = "https://deepgram.com/", rotate_ua: bool = True):  # Credits: BooruSearch by @ArThirtyFour
     try:
         working_proxies = load_working_proxies_from_file()
 
@@ -618,7 +550,7 @@ def get_working_proxy(test_url: str = "https://deepgram.com/", rotate_ua: bool =
         return None
 
 
-def load_working_proxies_from_file(filename="transcriber_proxies.json"):
+def load_working_proxies_from_file(filename="transcriber_proxies.json"):  # Credits: BooruSearch by @ArThirtyFour
     try:
         data_dir = ApplicationLoader.getFilesDirFixed()
         file_path = os.path.join(str(data_dir), filename)
@@ -633,7 +565,7 @@ def load_working_proxies_from_file(filename="transcriber_proxies.json"):
         return []
 
 
-def get_request_headers(rotate_ua: bool = True) -> dict:
+def get_request_headers(rotate_ua: bool = True) -> dict:  # Credits: BooruSearch by @ArThirtyFour
     headers = {
         "Accept": "application/json",
         "Accept-Encoding": "gzip, deflate",
@@ -650,29 +582,30 @@ def get_request_headers(rotate_ua: bool = True) -> dict:
 class TranscriberPlugin(BasePlugin):
     def on_plugin_load(self):
         try:
+            TranscribeButton = find_class("org.telegram.ui.Components.TranscribeButton")
+            ChatActivity = find_class("org.telegram.ui.ChatActivity")
+            TL_jsonObject = find_class("org.telegram.tgnet.TLRPC$TL_jsonObject")
+
             jboolean = Boolean.TYPE
             jfloat = Float.TYPE
 
-            TranscribeButton = _resolve_target_class("org.telegram.ui.Components.TranscribeButton", ("onTap",))
-            _hook_named_method(self, TranscribeButton, "onTap", self.CreateTranscribeButtonHook(self))
+            onTap = TranscribeButton.getDeclaredMethod("onTap")
+            onTap.setAccessible(True)
+            self.hook_method(onTap, self.CreateTranscribeButtonHook(self))
 
-            ChatActivity = _resolve_target_class("org.telegram.ui.ChatActivity", ("onResume", "createMenu"))
-            _hook_named_method(self, ChatActivity, "onResume", self.ActivityResumeHook(self))
-            _hook_named_method(
-                self,
-                ChatActivity,
-                "createMenu",
-                self.CreateMenuHook(self),
-                param_types=(View, jboolean, jboolean, jfloat, jfloat, jboolean, jboolean),
-            )
+            onResume = ChatActivity.getDeclaredMethod("onResume")
+            onResume.setAccessible(True)
+            self.hook_method(onResume, self.ActivityResumeHook(self))
 
-            TLRPC = find_class("org.telegram.tgnet.TLRPC")
-            TL_jsonObject = _resolve_inner_class(TLRPC, "org.telegram.tgnet.TLRPC", "TL_jsonObject")
-            mc_class = get_messages_controller().getClass()
-            _hook_named_method(
-                self, mc_class, "applyAppConfig", self.ApplyAppConfigHook(self), param_types=(TL_jsonObject,)
-            )
+            applyAppConfig = get_messages_controller().getClass().getDeclaredMethod("applyAppConfig", TL_jsonObject)
+            applyAppConfig.setAccessible(True)
+            self.hook_method(applyAppConfig, self.ApplyAppConfigHook(self))
 
+            createMenu = ChatActivity.getDeclaredMethod("createMenu", View, jboolean, jboolean, jfloat, jfloat, jboolean, jboolean)
+            createMenu.setAccessible(True)
+            self.hook_method(createMenu, self.CreateMenuHook(self))
+
+            # Force enable transcription button (in case chat was opened before hooks worked)
             self.enable_transcription_button()
 
         except Exception as e:
@@ -919,7 +852,7 @@ class TranscriberPlugin(BasePlugin):
                     break
         return items
 
-    def update_proxy_list(self, _=None):
+    def update_proxy_list(self, _=None):  # Credits: BooruSearch by @ArThirtyFour
         def update_proxies_background():
             try:
                 run_on_ui_thread(lambda: BulletinHelper.show_info(localization.get_string("bulletin_proxy_update_started")))
@@ -982,8 +915,8 @@ class TranscriberPlugin(BasePlugin):
             self.show_error_with_button(localization.get_string("error_message_not_voice"))
             return
 
-        TranscribeButton = _resolve_callable_class("org.telegram.ui.Components.TranscribeButton")
-        NotificationCenter = _resolve_callable_class("org.telegram.messenger.NotificationCenter")
+        TranscribeButton = _jc("org.telegram.ui.Components.TranscribeButton")
+        NotificationCenter = _jc("org.telegram.messenger.NotificationCenter")
 
         account = messageObject.currentAccount
         messageId = messageObject.messageOwner.id
@@ -1134,8 +1067,8 @@ class TranscriberPlugin(BasePlugin):
             elif model == 3 or model == 4:
                 uri = "https://t.me/ginqusPlugins/11"
 
-            Browser = _resolve_callable_class("org.telegram.messenger.browser.Browser")
-            LaunchActivity = _resolve_callable_class("org.telegram.ui.LaunchActivity")
+            Browser = _jc("org.telegram.messenger.browser.Browser")
+            LaunchActivity = _jc("org.telegram.ui.LaunchActivity")
             activity = LaunchActivity.instance
             if activity:
                 Browser.openUrl(activity, Uri.parse(uri))
@@ -1183,18 +1116,19 @@ class TranscriberPlugin(BasePlugin):
                 self.log("[Transcriber] Cannot show dialog, no parent activity.")
                 return
 
-            builder = AlertDialogBuilder(activity)
+            builder = AlertDialogBuilder(activity)  # Default is ALERT_TYPE_MESSAGE
             builder.set_title(localization.get_string("alert_title_error"))
             builder.set_message(error)
 
             def on_positive_click(bld: AlertDialogBuilder, _: int):
-                ClipData = _resolve_callable_class("android.content.ClipData")
-                Context = _resolve_callable_class("android.content.Context")
+                ClipData = _jc("android.content.ClipData")
+                Context = _jc("android.content.Context")
 
                 clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE)
                 clip = ClipData.newPlainText("error", error)
                 clipboard.setPrimaryClip(clip)
 
+                # BulletinHelper.show_copied_to_clipboard doesn't work for some reason??
                 run_on_ui_thread(lambda: BulletinHelper.show_info(localization.get_string("bulletin_copied_to_clipboard")))
                 bld.dismiss()
 
@@ -1217,6 +1151,7 @@ class TranscriberPlugin(BasePlugin):
         def replace_hooked_method(self, param):
             self.onTap(param)
 
+        # Mostly identical to TranscribeButton.java but with minor changes
         def onTap(self, param):
             try:
                 this = param.thisObject
@@ -1226,8 +1161,7 @@ class TranscriberPlugin(BasePlugin):
                 loading = get_private_field(this, "loading")
                 selectorDrawable = get_private_field(this, "selectorDrawable")
 
-                RippleDrawable = find_class("android.graphics.drawable.RippleDrawable")
-                StateSet = _resolve_callable_class("android.util.StateSet")
+                StateSet = _jc("android.util.StateSet")
 
                 if parent == None:
                     return
@@ -1241,16 +1175,7 @@ class TranscriberPlugin(BasePlugin):
                     processClick = True
                     this.setOpen(False, True)
                     this.setLoading(False, True)
-                is_ripple = False
-                if selectorDrawable is not None:
-                    try:
-                        is_ripple = (not RippleDrawable is None) and isinstance(selectorDrawable, RippleDrawable)
-                    except TypeError:
-                        try:
-                            is_ripple = selectorDrawable.getClass().getName() == "android.graphics.drawable.RippleDrawable"
-                        except Exception:
-                            is_ripple = False
-                if is_ripple:
+                if selectorDrawable is not None and selectorDrawable.getClass().getName() == "android.graphics.drawable.RippleDrawable":
                     try:
                         selectorDrawable.setState(StateSet.NOTHING)
                         parent.invalidate()
@@ -1267,6 +1192,7 @@ class TranscriberPlugin(BasePlugin):
                 self.plugin.log(f"[Transcriber] Error in onTap: {e}")
 
         def open_settings(self):
+            # Credits: CactusLib plugin by @chillden4ik
             try:
 
                 def _open_settings():
@@ -1279,6 +1205,7 @@ class TranscriberPlugin(BasePlugin):
                 self.plugin.show_error_with_button(str(e), error_prefix)
                 self.plugin.log(f"[Transcriber] Error in open_settings: {e}")
 
+        # The logic is mostly identical to TranscribeButton.java but with minor changes
         def transcribePressed(self, param, messageObject, open):
             try:
                 model = self.plugin.get_setting("model", 2)
@@ -1291,11 +1218,11 @@ class TranscriberPlugin(BasePlugin):
                 elif model in (3, 4):
                     token = self.plugin.get_setting("token_gemini", "")
 
-                TranscribeButton = _resolve_callable_class("org.telegram.ui.Components.TranscribeButton")
-                MessagesStorage = _resolve_callable_class("org.telegram.messenger.MessagesStorage")
-                DialogObject = _resolve_callable_class("org.telegram.messenger.DialogObject")
-                MessagesController = _resolve_callable_class("org.telegram.messenger.MessagesController")
-                NotificationCenter = _resolve_callable_class("org.telegram.messenger.NotificationCenter")
+                TranscribeButton = _jc("org.telegram.ui.Components.TranscribeButton")
+                MessagesStorage = _jc("org.telegram.messenger.MessagesStorage")
+                DialogObject = _jc("org.telegram.messenger.DialogObject")
+                MessagesController = _jc("org.telegram.messenger.MessagesController")
+                NotificationCenter = _jc("org.telegram.messenger.NotificationCenter")
 
                 this = param.thisObject
                 transcribeOperationsByDialogPosition = get_private_field(this, "transcribeOperationsByDialogPosition")
@@ -1348,6 +1275,7 @@ class TranscriberPlugin(BasePlugin):
                 self.plugin.log(f"[Transcriber] Error in transcribePressed: {e}")
                 self.stop_animations(this, messageObject, account, messageId)
 
+        # Identical to TranscribeButton.java
         def reqInfoHash(self, messageObject):
             if messageObject == None:
                 return 0
@@ -1355,12 +1283,12 @@ class TranscriberPlugin(BasePlugin):
 
         def start_transcription_logic(self, messageObject, this, model: Optional[int] = None):
             try:
-                MessagesStorage = _resolve_callable_class("org.telegram.messenger.MessagesStorage")
-                DialogObject = _resolve_callable_class("org.telegram.messenger.DialogObject")
-                MessagesController = _resolve_callable_class("org.telegram.messenger.MessagesController")
+                MessagesStorage = _jc("org.telegram.messenger.MessagesStorage")
+                DialogObject = _jc("org.telegram.messenger.DialogObject")
+                MessagesController = _jc("org.telegram.messenger.MessagesController")
 
                 if messageObject == None or messageObject.messageOwner == None or not messageObject.isSent():
-                    self.plugin.log("[Transcriber] either messageObject is None, messageOwner is None or message isn't sent")
+                    self.plguin.log("[Transcriber] either messageObject is None, messageOwner is None or message isn't sent")
                     return
 
                 account = messageObject.currentAccount
@@ -1384,6 +1312,7 @@ class TranscriberPlugin(BasePlugin):
 
                 messageObject.messageOwner.voiceTranscriptionId = id
 
+                # Fixes loading animation not playing when reopening the chat
                 MessagesStorage.getInstance(account).updateMessageVoiceTranscription(dialogId, messageId, "", messageObject.messageOwner)
 
                 run_on_queue(lambda: self._transcribe(messageObject, account, dialogId, messageId, id, this, model))
@@ -1413,7 +1342,7 @@ class TranscriberPlugin(BasePlugin):
 
         def _perform_transcription(self, path, messageObject, account, dialogId, messageId, id, this, model: Optional[int] = None):
             try:
-                if self.plugin.get_setting("convert_to_audio", True) and messageObject.type == 5:
+                if self.plugin.get_setting("convert_to_audio", True) and messageObject.type == 5:  # TYPE_ROUND_VIDEO
                     try:
                         path = self.extract_audio_from_mp4(path)
                         if isinstance(path, Exception):
@@ -1450,8 +1379,8 @@ class TranscriberPlugin(BasePlugin):
 
                         finalText = str(text)
 
-                        TranscribeButton = _resolve_callable_class("org.telegram.ui.Components.TranscribeButton")
-                        MessagesStorage = _resolve_callable_class("org.telegram.messenger.MessagesStorage")
+                        TranscribeButton = _jc("org.telegram.ui.Components.TranscribeButton")
+                        MessagesStorage = _jc("org.telegram.messenger.MessagesStorage")
 
                         messageObject.messageOwner.voiceTranscriptionOpen = True
                         messageObject.messageOwner.voiceTranscriptionFinal = True
@@ -1496,7 +1425,7 @@ class TranscriberPlugin(BasePlugin):
 
         def stop_animations(self, this, messageObject, account, messageId):
             try:
-                NotificationCenter = _resolve_callable_class("org.telegram.messenger.NotificationCenter")
+                NotificationCenter = _jc("org.telegram.messenger.NotificationCenter")
 
                 if this:
                     transcribeOperationsByDialogPosition = get_private_field(this, "transcribeOperationsByDialogPosition")
@@ -1518,8 +1447,8 @@ class TranscriberPlugin(BasePlugin):
 
         def get_audio_path(self, msg):
             try:
-                UserConfig = _resolve_callable_class("org.telegram.messenger.UserConfig")
-                FileLoader = _resolve_callable_class("org.telegram.messenger.FileLoader")
+                UserConfig = _jc("org.telegram.messenger.UserConfig")
+                FileLoader = _jc("org.telegram.messenger.FileLoader")
 
                 current_account = UserConfig.selectedAccount
                 file_loader = FileLoader.getInstance(current_account)
@@ -1544,11 +1473,11 @@ class TranscriberPlugin(BasePlugin):
 
         def extract_audio_from_mp4(self, in_path):
             try:
-                MediaExtractor = _resolve_callable_class("android.media.MediaExtractor")
-                MediaMuxer = _resolve_callable_class("android.media.MediaMuxer")
-                MediaFormat = _resolve_callable_class("android.media.MediaFormat")
-                ByteBuffer = _resolve_callable_class("java.nio.ByteBuffer")
-                BufferInfo = _resolve_callable_class("android.media.MediaCodec$BufferInfo")()
+                MediaExtractor = _jc("android.media.MediaExtractor")
+                MediaMuxer = _jc("android.media.MediaMuxer")
+                MediaFormat = _jc("android.media.MediaFormat")
+                ByteBuffer = _jc("java.nio.ByteBuffer")
+                BufferInfo = _jc("android.media.MediaCodec$BufferInfo")()
 
                 extractor = MediaExtractor()
                 muxer = None
@@ -1576,7 +1505,7 @@ class TranscriberPlugin(BasePlugin):
 
                 muxer.start()
 
-                buffer = ByteBuffer.allocate(1024 * 1024)
+                buffer = ByteBuffer.allocate(1024 * 1024)  # 1MB buffer
 
                 while True:
                     sample_size = extractor.readSampleData(buffer, 0)
@@ -1631,7 +1560,7 @@ class TranscriberPlugin(BasePlugin):
                 adapter = FakeDNSAdapter(HOSTS_MAP if self.plugin.get_setting("enable_sni_proxy") else {}, proxy_dict=proxy_dict)
                 session.mount("https://", adapter)
 
-                if model == 0:
+                if model == 0:  # AssemblyAI
                     base_url = "https://api.assemblyai.com"
                     headers = {"authorization": token}
 
@@ -1679,7 +1608,7 @@ class TranscriberPlugin(BasePlugin):
                     else:
                         raise TimeoutError(localization.get_string("error_timed_out"))
 
-                elif model == 1:
+                elif model == 1:  # Doxgram ☠️☠️
                     url = "https://api.deepgram.com/v1/listen?model=nova-3-general&smart_format=true&detect_language=true&diarize=true"
                     headers = {
                         "Authorization": f"Token {token}",
@@ -1694,6 +1623,7 @@ class TranscriberPlugin(BasePlugin):
                     if self.plugin.get_setting("separate_speakers", True):
                         words = response.json()["results"]["channels"][0]["alternatives"][0]["words"]
 
+                        # Determine unique speakers
                         unique_speakers = set()
                         for word_data in words:
                             if "speaker" in word_data:
@@ -1735,7 +1665,7 @@ class TranscriberPlugin(BasePlugin):
                         result = response.json()["results"]["channels"][0]["alternatives"][0]["transcript"]
                     return str(result)
 
-                elif model == 2:
+                elif model == 2:  # Mistral
                     url = "https://api.mistral.ai/v1/audio/transcriptions"
                     headers = {"x-api-key": token}
                     files = {
@@ -1755,6 +1685,7 @@ class TranscriberPlugin(BasePlugin):
                         segments = response_data.get("segments", [])
 
                         if segments:
+                            # Group segments by speaker
                             speaker_map = {}
                             speaker_order = []
 
@@ -1764,9 +1695,11 @@ class TranscriberPlugin(BasePlugin):
                                     speaker_map[speaker_id] = speaker_order.__len__()
                                     speaker_order.append(speaker_id)
 
+                            # Check if there's only one speaker
                             if len(speaker_map) <= 1:
                                 return response_data.get("text", "")
 
+                            # Build formatted output
                             script_lines = []
                             current_speaker = None
                             current_text = []
@@ -1785,6 +1718,7 @@ class TranscriberPlugin(BasePlugin):
                                 elif text:
                                     current_text.append(text)
 
+                            # Flush last speaker
                             if current_text and current_speaker is not None:
                                 speaker_label = chr(65 + speaker_map[current_speaker])
                                 full_text = " ".join(current_text).strip()
@@ -1794,7 +1728,8 @@ class TranscriberPlugin(BasePlugin):
 
                     return response_data.get("text", "")
 
-                elif model in (3, 4):
+                elif model in (3, 4):  # Gemini
+                    # Credits: Voice to Text plugin by @PESSDES
                     with open(path, "rb") as f:
                         audio64 = base64.b64encode(f.read()).decode("utf-8")
 
@@ -1838,6 +1773,7 @@ class TranscriberPlugin(BasePlugin):
             except Exception as e:
                 return e
 
+    # Called when a chat is opened (maybe in some other cases too idk)
     class ActivityResumeHook(MethodHook):
         def __init__(self, plugin_instance):
             super().__init__()
@@ -1851,6 +1787,8 @@ class TranscriberPlugin(BasePlugin):
                 run_on_ui_thread(lambda: BulletinHelper.show_info(error_prefix + str(e)))
                 self.plugin.log(f"[Transcriber] Error in ActivityResumeHook: {e}")
 
+    # Called every 4 minutes or so (can also be called by a server push)
+    # By default it resets the transcription quota so we're overwriting it here
     class ApplyAppConfigHook(MethodHook):
         def __init__(self, plugin_instance):
             super().__init__()
