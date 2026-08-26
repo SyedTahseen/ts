@@ -42,6 +42,112 @@ from android.view import View  # type: ignore
 from android.net import Uri  # type: ignore
 
 TRANSCRIPTION_EXECUTOR = concurrent.futures.ThreadPoolExecutor()
+
+# ---------------------------------------------------------------------------
+# Cross-fork class resolution helpers
+#
+# exteraGram and forks such as NagramX XF disagree on what find_class()
+# hands back:
+#   - On exteraGram, find_class(name) returns something that needs an
+#     extra .getClass() call before it's usable for reflection
+#     (getDeclaredMethod/getDeclaredMethods), and find_class(name) itself
+#     can be called directly (Foo.getInstance(x), Foo()).
+#   - On NagramX XF, find_class(name) already returns the reflectable
+#     Class object. Calling .getClass() on that (as exteraGram's code
+#     does) returns the *metaclass* (java.lang.Class's own Class), so
+#     getDeclaredMethods() silently enumerates Class's own methods
+#     instead of the target class's — no error, the hook just never
+#     fires. And find_class(name) can't be called directly there
+#     (raises "'Class' object has no attribute 'getInstance'"); java's
+#     jclass(name) is the callable proxy on that fork instead.
+#
+# The helpers below try each strategy and keep whichever one actually
+# works, so the plugin runs on either fork without needing to know which
+# one it's on.
+# ---------------------------------------------------------------------------
+try:
+    from java import jclass as _jclass
+except Exception:
+    _jclass = None
+
+
+def _resolve_target_class(class_name: str, expected_method_names):
+    """Get a Class handle usable for reflection (hooking methods)."""
+    candidates = []
+    try:
+        candidates.append(find_class(class_name))
+    except Exception:
+        pass
+    try:
+        candidates.append(find_class(class_name).getClass())
+    except Exception:
+        pass
+
+    for clazz in candidates:
+        try:
+            names = set(m.getName() for m in clazz.getDeclaredMethods())
+            if any(n in names for n in expected_method_names):
+                return clazz
+        except Exception:
+            continue
+
+    return candidates[0] if candidates else None
+
+
+def _resolve_inner_class(outer_class, outer_class_name: str, inner_name: str):
+    """Resolve a nested Java class such as TLRPC.TL_jsonObject across forks."""
+    try:
+        return find_class(f"{outer_class_name}${inner_name}")
+    except Exception:
+        pass
+    if outer_class is not None:
+        try:
+            return getattr(outer_class, inner_name)
+        except Exception:
+            pass
+        try:
+            for c in outer_class.getDeclaredClasses():
+                if c.getSimpleName() == inner_name:
+                    return c
+        except Exception:
+            pass
+    return None
+
+
+def _resolve_callable_class(class_name: str):
+    """Get a class handle usable for *calling* static methods, reading
+    static fields, or invoking a constructor (Foo.getInstance(x), Foo())."""
+    if _jclass is not None:
+        try:
+            return _jclass(class_name)
+        except Exception:
+            pass
+    return find_class(class_name)
+
+
+def _hook_named_method(plugin_instance, clazz, method_name: str, hook_instance, param_types=None):
+    """Hook method_name on clazz, tolerating a missing class/method so one
+    failed hook doesn't prevent the rest of on_plugin_load from running."""
+    if clazz is None:
+        return False
+    try:
+        if param_types is not None:
+            method = clazz.getDeclaredMethod(method_name, *param_types)
+        else:
+            overloads = [m for m in clazz.getDeclaredMethods() if m.getName() == method_name]
+            method = max(overloads, key=lambda m: m.getParameterCount(), default=None)
+        if method is None:
+            return False
+        method.setAccessible(True)
+        plugin_instance.hook_method(method, hook_instance)
+        return True
+    except Exception as e:
+        try:
+            plugin_instance.log(f"[Transcriber] Failed to hook {method_name}: {e}")
+        except Exception:
+            pass
+        return False
+
 MODELS = ["Universal 3 Pro (AssemblyAI)", "Nova 3 (Deepgram)", "Voxtral Mini (Mistral)", "Gemini Flash (Google)", "Gemini Flash Lite (Google)"]
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -572,28 +678,32 @@ def get_request_headers(rotate_ua: bool = True) -> dict:  # Credits: BooruSearch
 class TranscriberPlugin(BasePlugin):
     def on_plugin_load(self):
         try:
-            TranscribeButton = find_class("org.telegram.ui.Components.TranscribeButton")
-            ChatActivity = find_class("org.telegram.ui.ChatActivity")
-            TLRPC = find_class("org.telegram.tgnet.TLRPC")
-
             jboolean = Boolean.TYPE
             jfloat = Float.TYPE
 
-            onTap = TranscribeButton.getClass().getDeclaredMethod("onTap")
-            onTap.setAccessible(True)
-            self.hook_method(onTap, self.CreateTranscribeButtonHook(self))
+            TranscribeButton = _resolve_target_class("org.telegram.ui.Components.TranscribeButton", ("onTap",))
+            _hook_named_method(self, TranscribeButton, "onTap", self.CreateTranscribeButtonHook(self))
 
-            onResume = ChatActivity.getClass().getDeclaredMethod("onResume")
-            onResume.setAccessible(True)
-            self.hook_method(onResume, self.ActivityResumeHook(self))
+            ChatActivity = _resolve_target_class("org.telegram.ui.ChatActivity", ("onResume", "createMenu"))
+            _hook_named_method(self, ChatActivity, "onResume", self.ActivityResumeHook(self))
+            _hook_named_method(
+                self,
+                ChatActivity,
+                "createMenu",
+                self.CreateMenuHook(self),
+                param_types=(View, jboolean, jboolean, jfloat, jfloat, jboolean, jboolean),
+            )
 
-            applyAppConfig = get_messages_controller().getClass().getDeclaredMethod("applyAppConfig", TLRPC.TL_jsonObject)
-            applyAppConfig.setAccessible(True)
-            self.hook_method(applyAppConfig, self.ApplyAppConfigHook(self))
-
-            createMenu = ChatActivity.getClass().getDeclaredMethod("createMenu", View, jboolean, jboolean, jfloat, jfloat, jboolean, jboolean)
-            createMenu.setAccessible(True)
-            self.hook_method(createMenu, self.CreateMenuHook(self))
+            # get_messages_controller() returns a live instance, so .getClass()
+            # on it is correct on both forks (unlike find_class(...).getClass()
+            # above, which is the metaclass bug this whole helper section works
+            # around).
+            TLRPC = find_class("org.telegram.tgnet.TLRPC")
+            TL_jsonObject = _resolve_inner_class(TLRPC, "org.telegram.tgnet.TLRPC", "TL_jsonObject")
+            mc_class = get_messages_controller().getClass()
+            _hook_named_method(
+                self, mc_class, "applyAppConfig", self.ApplyAppConfigHook(self), param_types=(TL_jsonObject,)
+            )
 
             # Force enable transcription button (in case chat was opened before hooks worked)
             self.enable_transcription_button()
@@ -905,8 +1015,8 @@ class TranscriberPlugin(BasePlugin):
             self.show_error_with_button(localization.get_string("error_message_not_voice"))
             return
 
-        TranscribeButton = find_class("org.telegram.ui.Components.TranscribeButton")
-        NotificationCenter = find_class("org.telegram.messenger.NotificationCenter")
+        TranscribeButton = _resolve_callable_class("org.telegram.ui.Components.TranscribeButton")
+        NotificationCenter = _resolve_callable_class("org.telegram.messenger.NotificationCenter")
 
         account = messageObject.currentAccount
         messageId = messageObject.messageOwner.id
@@ -1057,8 +1167,8 @@ class TranscriberPlugin(BasePlugin):
             elif model == 3 or model == 4:
                 uri = "https://t.me/ginqusPlugins/11"
 
-            Browser = find_class("org.telegram.messenger.browser.Browser")
-            LaunchActivity = find_class("org.telegram.ui.LaunchActivity")
+            Browser = _resolve_callable_class("org.telegram.messenger.browser.Browser")
+            LaunchActivity = _resolve_callable_class("org.telegram.ui.LaunchActivity")
             activity = LaunchActivity.instance
             if activity:
                 Browser.openUrl(activity, Uri.parse(uri))
@@ -1111,8 +1221,8 @@ class TranscriberPlugin(BasePlugin):
             builder.set_message(error)
 
             def on_positive_click(bld: AlertDialogBuilder, _: int):
-                ClipData = find_class("android.content.ClipData")
-                Context = find_class("android.content.Context")
+                ClipData = _resolve_callable_class("android.content.ClipData")
+                Context = _resolve_callable_class("android.content.Context")
 
                 clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE)
                 clip = ClipData.newPlainText("error", error)
@@ -1152,7 +1262,7 @@ class TranscriberPlugin(BasePlugin):
                 selectorDrawable = get_private_field(this, "selectorDrawable")
 
                 RippleDrawable = find_class("android.graphics.drawable.RippleDrawable")
-                StateSet = find_class("android.util.StateSet")
+                StateSet = _resolve_callable_class("android.util.StateSet")
 
                 if parent == None:
                     return
@@ -1166,7 +1276,21 @@ class TranscriberPlugin(BasePlugin):
                     processClick = True
                     this.setOpen(False, True)
                     this.setLoading(False, True)
-                if not RippleDrawable is None and isinstance(selectorDrawable, RippleDrawable):
+                is_ripple = False
+                if selectorDrawable is not None:
+                    try:
+                        # Works on exteraGram: find_class() returns a real
+                        # type, so isinstance() against it works directly.
+                        is_ripple = (not RippleDrawable is None) and isinstance(selectorDrawable, RippleDrawable)
+                    except TypeError:
+                        # NagramX XF: find_class() can return something
+                        # isinstance() won't accept as a type. Fall back to
+                        # comparing the runtime class name via reflection.
+                        try:
+                            is_ripple = selectorDrawable.getClass().getName() == "android.graphics.drawable.RippleDrawable"
+                        except Exception:
+                            is_ripple = False
+                if is_ripple:
                     try:
                         selectorDrawable.setState(StateSet.NOTHING)
                         parent.invalidate()
@@ -1209,11 +1333,11 @@ class TranscriberPlugin(BasePlugin):
                 elif model in (3, 4):
                     token = self.plugin.get_setting("token_gemini", "")
 
-                TranscribeButton = find_class("org.telegram.ui.Components.TranscribeButton")
-                MessagesStorage = find_class("org.telegram.messenger.MessagesStorage")
-                DialogObject = find_class("org.telegram.messenger.DialogObject")
-                MessagesController = find_class("org.telegram.messenger.MessagesController")
-                NotificationCenter = find_class("org.telegram.messenger.NotificationCenter")
+                TranscribeButton = _resolve_callable_class("org.telegram.ui.Components.TranscribeButton")
+                MessagesStorage = _resolve_callable_class("org.telegram.messenger.MessagesStorage")
+                DialogObject = _resolve_callable_class("org.telegram.messenger.DialogObject")
+                MessagesController = _resolve_callable_class("org.telegram.messenger.MessagesController")
+                NotificationCenter = _resolve_callable_class("org.telegram.messenger.NotificationCenter")
 
                 this = param.thisObject
                 transcribeOperationsByDialogPosition = get_private_field(this, "transcribeOperationsByDialogPosition")
@@ -1274,12 +1398,12 @@ class TranscriberPlugin(BasePlugin):
 
         def start_transcription_logic(self, messageObject, this, model: Optional[int] = None):
             try:
-                MessagesStorage = find_class("org.telegram.messenger.MessagesStorage")
-                DialogObject = find_class("org.telegram.messenger.DialogObject")
-                MessagesController = find_class("org.telegram.messenger.MessagesController")
+                MessagesStorage = _resolve_callable_class("org.telegram.messenger.MessagesStorage")
+                DialogObject = _resolve_callable_class("org.telegram.messenger.DialogObject")
+                MessagesController = _resolve_callable_class("org.telegram.messenger.MessagesController")
 
                 if messageObject == None or messageObject.messageOwner == None or not messageObject.isSent():
-                    self.plguin.log("[Transcriber] either messageObject is None, messageOwner is None or message isn't sent")
+                    self.plugin.log("[Transcriber] either messageObject is None, messageOwner is None or message isn't sent")
                     return
 
                 account = messageObject.currentAccount
@@ -1370,8 +1494,8 @@ class TranscriberPlugin(BasePlugin):
 
                         finalText = str(text)
 
-                        TranscribeButton = find_class("org.telegram.ui.Components.TranscribeButton")
-                        MessagesStorage = find_class("org.telegram.messenger.MessagesStorage")
+                        TranscribeButton = _resolve_callable_class("org.telegram.ui.Components.TranscribeButton")
+                        MessagesStorage = _resolve_callable_class("org.telegram.messenger.MessagesStorage")
 
                         messageObject.messageOwner.voiceTranscriptionOpen = True
                         messageObject.messageOwner.voiceTranscriptionFinal = True
@@ -1416,7 +1540,7 @@ class TranscriberPlugin(BasePlugin):
 
         def stop_animations(self, this, messageObject, account, messageId):
             try:
-                NotificationCenter = find_class("org.telegram.messenger.NotificationCenter")
+                NotificationCenter = _resolve_callable_class("org.telegram.messenger.NotificationCenter")
 
                 if this:
                     transcribeOperationsByDialogPosition = get_private_field(this, "transcribeOperationsByDialogPosition")
@@ -1438,8 +1562,8 @@ class TranscriberPlugin(BasePlugin):
 
         def get_audio_path(self, msg):
             try:
-                UserConfig = find_class("org.telegram.messenger.UserConfig")
-                FileLoader = find_class("org.telegram.messenger.FileLoader")
+                UserConfig = _resolve_callable_class("org.telegram.messenger.UserConfig")
+                FileLoader = _resolve_callable_class("org.telegram.messenger.FileLoader")
 
                 current_account = UserConfig.selectedAccount
                 file_loader = FileLoader.getInstance(current_account)
@@ -1464,11 +1588,11 @@ class TranscriberPlugin(BasePlugin):
 
         def extract_audio_from_mp4(self, in_path):
             try:
-                MediaExtractor = find_class("android.media.MediaExtractor")
-                MediaMuxer = find_class("android.media.MediaMuxer")
-                MediaFormat = find_class("android.media.MediaFormat")
-                ByteBuffer = find_class("java.nio.ByteBuffer")
-                BufferInfo = find_class("android.media.MediaCodec$BufferInfo")()
+                MediaExtractor = _resolve_callable_class("android.media.MediaExtractor")
+                MediaMuxer = _resolve_callable_class("android.media.MediaMuxer")
+                MediaFormat = _resolve_callable_class("android.media.MediaFormat")
+                ByteBuffer = _resolve_callable_class("java.nio.ByteBuffer")
+                BufferInfo = _resolve_callable_class("android.media.MediaCodec$BufferInfo")()
 
                 extractor = MediaExtractor()
                 muxer = None
