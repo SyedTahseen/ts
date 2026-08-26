@@ -23,48 +23,26 @@ import os
 from base_plugin import BasePlugin, MethodHook, MethodReplacement, MenuItemData, MenuItemType
 from client_utils import run_on_queue, get_last_fragment, get_messages_controller
 from hook_utils import find_class, get_private_field, set_private_field
-from com.exteragram.messenger.plugins.ui import PluginSettingsActivity  # type: ignore
-from com.exteragram.messenger.plugins import PluginsController  # type: ignore
+from com.exteragram.messenger.plugins.ui import PluginSettingsActivity
+from com.exteragram.messenger.plugins import PluginsController
 from ui.settings import Header, Input, Text, Selector, Switch
-from org.telegram.messenger import ApplicationLoader  # type: ignore
+from org.telegram.messenger import ApplicationLoader
 from requests.structures import CaseInsensitiveDict
 from android_utils import run_on_ui_thread, log
-from java.util import HashMap, Objects, Locale  # type: ignore
-from org.telegram.messenger import R as R_tg  # type: ignore
+from java.util import HashMap, Objects, Locale
+from org.telegram.messenger import R as R_tg
 from requests.adapters import HTTPAdapter
 from ui.alert import AlertDialogBuilder
 from ui.bulletin import BulletinHelper
 from typing import Dict, Any, Optional
-from java.lang import Boolean, Float  # type: ignore
-from android.content import Intent  # type: ignore
+from java.lang import Boolean, Float
+from android.content import Intent
 from urllib.parse import urlparse
-from android.view import View  # type: ignore
-from android.net import Uri  # type: ignore
+from android.view import View
+from android.net import Uri
 
 TRANSCRIPTION_EXECUTOR = concurrent.futures.ThreadPoolExecutor()
 
-# ---------------------------------------------------------------------------
-# Cross-fork class resolution helpers
-#
-# exteraGram and forks such as NagramX XF disagree on what find_class()
-# hands back:
-#   - On exteraGram, find_class(name) returns something that needs an
-#     extra .getClass() call before it's usable for reflection
-#     (getDeclaredMethod/getDeclaredMethods), and find_class(name) itself
-#     can be called directly (Foo.getInstance(x), Foo()).
-#   - On NagramX XF, find_class(name) already returns the reflectable
-#     Class object. Calling .getClass() on that (as exteraGram's code
-#     does) returns the *metaclass* (java.lang.Class's own Class), so
-#     getDeclaredMethods() silently enumerates Class's own methods
-#     instead of the target class's — no error, the hook just never
-#     fires. And find_class(name) can't be called directly there
-#     (raises "'Class' object has no attribute 'getInstance'"); java's
-#     jclass(name) is the callable proxy on that fork instead.
-#
-# The helpers below try each strategy and keep whichever one actually
-# works, so the plugin runs on either fork without needing to know which
-# one it's on.
-# ---------------------------------------------------------------------------
 try:
     from java import jclass as _jclass
 except Exception:
@@ -72,7 +50,6 @@ except Exception:
 
 
 def _resolve_target_class(class_name: str, expected_method_names):
-    """Get a Class handle usable for reflection (hooking methods)."""
     candidates = []
     try:
         candidates.append(find_class(class_name))
@@ -95,7 +72,6 @@ def _resolve_target_class(class_name: str, expected_method_names):
 
 
 def _resolve_inner_class(outer_class, outer_class_name: str, inner_name: str):
-    """Resolve a nested Java class such as TLRPC.TL_jsonObject across forks."""
     try:
         return find_class(f"{outer_class_name}${inner_name}")
     except Exception:
@@ -115,8 +91,6 @@ def _resolve_inner_class(outer_class, outer_class_name: str, inner_name: str):
 
 
 def _resolve_callable_class(class_name: str):
-    """Get a class handle usable for *calling* static methods, reading
-    static fields, or invoking a constructor (Foo.getInstance(x), Foo())."""
     if _jclass is not None:
         try:
             return _jclass(class_name)
@@ -126,8 +100,6 @@ def _resolve_callable_class(class_name: str):
 
 
 def _hook_named_method(plugin_instance, clazz, method_name: str, hook_instance, param_types=None):
-    """Hook method_name on clazz, tolerating a missing class/method so one
-    failed hook doesn't prevent the rest of on_plugin_load from running."""
     if clazz is None:
         return False
     try:
@@ -187,7 +159,7 @@ DEFAULT_PROMPT_DIARIZATION = """Please produce a verbatim transcript of the audi
 Return the transcript as plain, unedited text."""
 
 
-class LocalizationManager:  # Credits: Command List plugin by @mihailkotovski
+class LocalizationManager:
     strings = {
         "en": {
             "header_settings": "Plugin settings",
@@ -503,7 +475,7 @@ class FakeDNSAdapter(HTTPAdapter):
         return response
 
 
-def get_proxy_list_from_url(url):  # Credits: BooruSearch by @ArThirtyFour
+def get_proxy_list_from_url(url):
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
@@ -521,7 +493,7 @@ def get_proxy_list_from_url(url):  # Credits: BooruSearch by @ArThirtyFour
         return []
 
 
-def normalize_proxy_url(raw):  # Credits: BooruSearch by @ArThirtyFour
+def normalize_proxy_url(raw):
     try:
         if raw is None:
             return None
@@ -550,7 +522,7 @@ def normalize_proxy_url(raw):  # Credits: BooruSearch by @ArThirtyFour
         return None
 
 
-def check_proxies_parallel(proxies, max_workers=50, max_working=20):  # Credits: BooruSearch by @ArThirtyFour
+def check_proxies_parallel(proxies, max_workers=50, max_working=20):
     working_proxies = []
     working_proxies_lock = threading.Lock()
     stop_search = threading.Event()
@@ -582,7 +554,7 @@ def check_proxies_parallel(proxies, max_workers=50, max_working=20):  # Credits:
     return working_proxies
 
 
-def check_single_proxy(proxy):  # Credits: BooruSearch by @ArThirtyFour
+def check_single_proxy(proxy):
     start_time = time.time()
 
     try:
@@ -602,7 +574,7 @@ def check_single_proxy(proxy):  # Credits: BooruSearch by @ArThirtyFour
         return proxy, False, 0
 
 
-def build_requests_proxies(proxy_url):  # Credits: BooruSearch by @ArThirtyFour
+def build_requests_proxies(proxy_url):
     p = normalize_proxy_url(proxy_url)
     if not p:
         return None
@@ -620,7 +592,7 @@ def save_working_proxies_to_file(working_proxies, filename="transcriber_proxies.
         log(f"[Transcriber] Ошибка при сохранении файла: {e}")
 
 
-def get_working_proxy(test_url: str = "https://deepgram.com/", rotate_ua: bool = True):  # Credits: BooruSearch by @ArThirtyFour
+def get_working_proxy(test_url: str = "https://deepgram.com/", rotate_ua: bool = True):
     try:
         working_proxies = load_working_proxies_from_file()
 
@@ -646,7 +618,7 @@ def get_working_proxy(test_url: str = "https://deepgram.com/", rotate_ua: bool =
         return None
 
 
-def load_working_proxies_from_file(filename="transcriber_proxies.json"):  # Credits: BooruSearch by @ArThirtyFour
+def load_working_proxies_from_file(filename="transcriber_proxies.json"):
     try:
         data_dir = ApplicationLoader.getFilesDirFixed()
         file_path = os.path.join(str(data_dir), filename)
@@ -661,7 +633,7 @@ def load_working_proxies_from_file(filename="transcriber_proxies.json"):  # Cred
         return []
 
 
-def get_request_headers(rotate_ua: bool = True) -> dict:  # Credits: BooruSearch by @ArThirtyFour
+def get_request_headers(rotate_ua: bool = True) -> dict:
     headers = {
         "Accept": "application/json",
         "Accept-Encoding": "gzip, deflate",
@@ -694,10 +666,6 @@ class TranscriberPlugin(BasePlugin):
                 param_types=(View, jboolean, jboolean, jfloat, jfloat, jboolean, jboolean),
             )
 
-            # get_messages_controller() returns a live instance, so .getClass()
-            # on it is correct on both forks (unlike find_class(...).getClass()
-            # above, which is the metaclass bug this whole helper section works
-            # around).
             TLRPC = find_class("org.telegram.tgnet.TLRPC")
             TL_jsonObject = _resolve_inner_class(TLRPC, "org.telegram.tgnet.TLRPC", "TL_jsonObject")
             mc_class = get_messages_controller().getClass()
@@ -705,7 +673,6 @@ class TranscriberPlugin(BasePlugin):
                 self, mc_class, "applyAppConfig", self.ApplyAppConfigHook(self), param_types=(TL_jsonObject,)
             )
 
-            # Force enable transcription button (in case chat was opened before hooks worked)
             self.enable_transcription_button()
 
         except Exception as e:
@@ -952,7 +919,7 @@ class TranscriberPlugin(BasePlugin):
                     break
         return items
 
-    def update_proxy_list(self, _=None):  # Credits: BooruSearch by @ArThirtyFour
+    def update_proxy_list(self, _=None):
         def update_proxies_background():
             try:
                 run_on_ui_thread(lambda: BulletinHelper.show_info(localization.get_string("bulletin_proxy_update_started")))
@@ -1216,7 +1183,7 @@ class TranscriberPlugin(BasePlugin):
                 self.log("[Transcriber] Cannot show dialog, no parent activity.")
                 return
 
-            builder = AlertDialogBuilder(activity)  # Default is ALERT_TYPE_MESSAGE
+            builder = AlertDialogBuilder(activity)
             builder.set_title(localization.get_string("alert_title_error"))
             builder.set_message(error)
 
@@ -1228,7 +1195,6 @@ class TranscriberPlugin(BasePlugin):
                 clip = ClipData.newPlainText("error", error)
                 clipboard.setPrimaryClip(clip)
 
-                # BulletinHelper.show_copied_to_clipboard doesn't work for some reason??
                 run_on_ui_thread(lambda: BulletinHelper.show_info(localization.get_string("bulletin_copied_to_clipboard")))
                 bld.dismiss()
 
@@ -1251,7 +1217,6 @@ class TranscriberPlugin(BasePlugin):
         def replace_hooked_method(self, param):
             self.onTap(param)
 
-        # Mostly identical to TranscribeButton.java but with minor changes
         def onTap(self, param):
             try:
                 this = param.thisObject
@@ -1279,13 +1244,8 @@ class TranscriberPlugin(BasePlugin):
                 is_ripple = False
                 if selectorDrawable is not None:
                     try:
-                        # Works on exteraGram: find_class() returns a real
-                        # type, so isinstance() against it works directly.
                         is_ripple = (not RippleDrawable is None) and isinstance(selectorDrawable, RippleDrawable)
                     except TypeError:
-                        # NagramX XF: find_class() can return something
-                        # isinstance() won't accept as a type. Fall back to
-                        # comparing the runtime class name via reflection.
                         try:
                             is_ripple = selectorDrawable.getClass().getName() == "android.graphics.drawable.RippleDrawable"
                         except Exception:
@@ -1307,7 +1267,6 @@ class TranscriberPlugin(BasePlugin):
                 self.plugin.log(f"[Transcriber] Error in onTap: {e}")
 
         def open_settings(self):
-            # Credits: CactusLib plugin by @chillden4ik
             try:
 
                 def _open_settings():
@@ -1320,7 +1279,6 @@ class TranscriberPlugin(BasePlugin):
                 self.plugin.show_error_with_button(str(e), error_prefix)
                 self.plugin.log(f"[Transcriber] Error in open_settings: {e}")
 
-        # The logic is mostly identical to TranscribeButton.java but with minor changes
         def transcribePressed(self, param, messageObject, open):
             try:
                 model = self.plugin.get_setting("model", 2)
@@ -1390,7 +1348,6 @@ class TranscriberPlugin(BasePlugin):
                 self.plugin.log(f"[Transcriber] Error in transcribePressed: {e}")
                 self.stop_animations(this, messageObject, account, messageId)
 
-        # Identical to TranscribeButton.java
         def reqInfoHash(self, messageObject):
             if messageObject == None:
                 return 0
@@ -1427,7 +1384,6 @@ class TranscriberPlugin(BasePlugin):
 
                 messageObject.messageOwner.voiceTranscriptionId = id
 
-                # Fixes loading animation not playing when reopening the chat
                 MessagesStorage.getInstance(account).updateMessageVoiceTranscription(dialogId, messageId, "", messageObject.messageOwner)
 
                 run_on_queue(lambda: self._transcribe(messageObject, account, dialogId, messageId, id, this, model))
@@ -1457,7 +1413,7 @@ class TranscriberPlugin(BasePlugin):
 
         def _perform_transcription(self, path, messageObject, account, dialogId, messageId, id, this, model: Optional[int] = None):
             try:
-                if self.plugin.get_setting("convert_to_audio", True) and messageObject.type == 5:  # TYPE_ROUND_VIDEO
+                if self.plugin.get_setting("convert_to_audio", True) and messageObject.type == 5:
                     try:
                         path = self.extract_audio_from_mp4(path)
                         if isinstance(path, Exception):
@@ -1620,7 +1576,7 @@ class TranscriberPlugin(BasePlugin):
 
                 muxer.start()
 
-                buffer = ByteBuffer.allocate(1024 * 1024)  # 1MB buffer
+                buffer = ByteBuffer.allocate(1024 * 1024)
 
                 while True:
                     sample_size = extractor.readSampleData(buffer, 0)
@@ -1675,7 +1631,7 @@ class TranscriberPlugin(BasePlugin):
                 adapter = FakeDNSAdapter(HOSTS_MAP if self.plugin.get_setting("enable_sni_proxy") else {}, proxy_dict=proxy_dict)
                 session.mount("https://", adapter)
 
-                if model == 0:  # AssemblyAI
+                if model == 0:
                     base_url = "https://api.assemblyai.com"
                     headers = {"authorization": token}
 
@@ -1723,7 +1679,7 @@ class TranscriberPlugin(BasePlugin):
                     else:
                         raise TimeoutError(localization.get_string("error_timed_out"))
 
-                elif model == 1:  # Doxgram ☠️☠️
+                elif model == 1:
                     url = "https://api.deepgram.com/v1/listen?model=nova-3-general&smart_format=true&detect_language=true&diarize=true"
                     headers = {
                         "Authorization": f"Token {token}",
@@ -1738,7 +1694,6 @@ class TranscriberPlugin(BasePlugin):
                     if self.plugin.get_setting("separate_speakers", True):
                         words = response.json()["results"]["channels"][0]["alternatives"][0]["words"]
 
-                        # Determine unique speakers
                         unique_speakers = set()
                         for word_data in words:
                             if "speaker" in word_data:
@@ -1780,7 +1735,7 @@ class TranscriberPlugin(BasePlugin):
                         result = response.json()["results"]["channels"][0]["alternatives"][0]["transcript"]
                     return str(result)
 
-                elif model == 2:  # Mistral
+                elif model == 2:
                     url = "https://api.mistral.ai/v1/audio/transcriptions"
                     headers = {"x-api-key": token}
                     files = {
@@ -1800,7 +1755,6 @@ class TranscriberPlugin(BasePlugin):
                         segments = response_data.get("segments", [])
 
                         if segments:
-                            # Group segments by speaker
                             speaker_map = {}
                             speaker_order = []
 
@@ -1810,11 +1764,9 @@ class TranscriberPlugin(BasePlugin):
                                     speaker_map[speaker_id] = speaker_order.__len__()
                                     speaker_order.append(speaker_id)
 
-                            # Check if there's only one speaker
                             if len(speaker_map) <= 1:
                                 return response_data.get("text", "")
 
-                            # Build formatted output
                             script_lines = []
                             current_speaker = None
                             current_text = []
@@ -1833,7 +1785,6 @@ class TranscriberPlugin(BasePlugin):
                                 elif text:
                                     current_text.append(text)
 
-                            # Flush last speaker
                             if current_text and current_speaker is not None:
                                 speaker_label = chr(65 + speaker_map[current_speaker])
                                 full_text = " ".join(current_text).strip()
@@ -1843,8 +1794,7 @@ class TranscriberPlugin(BasePlugin):
 
                     return response_data.get("text", "")
 
-                elif model in (3, 4):  # Gemini
-                    # Credits: Voice to Text plugin by @PESSDES
+                elif model in (3, 4):
                     with open(path, "rb") as f:
                         audio64 = base64.b64encode(f.read()).decode("utf-8")
 
@@ -1888,7 +1838,6 @@ class TranscriberPlugin(BasePlugin):
             except Exception as e:
                 return e
 
-    # Called when a chat is opened (maybe in some other cases too idk)
     class ActivityResumeHook(MethodHook):
         def __init__(self, plugin_instance):
             super().__init__()
@@ -1902,8 +1851,6 @@ class TranscriberPlugin(BasePlugin):
                 run_on_ui_thread(lambda: BulletinHelper.show_info(error_prefix + str(e)))
                 self.plugin.log(f"[Transcriber] Error in ActivityResumeHook: {e}")
 
-    # Called every 4 minutes or so (can also be called by a server push)
-    # By default it resets the transcription quota so we're overwriting it here
     class ApplyAppConfigHook(MethodHook):
         def __init__(self, plugin_instance):
             super().__init__()
