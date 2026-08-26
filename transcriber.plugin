@@ -52,7 +52,7 @@ except Exception:
 def _jc(name):
     return jclass(name) if jclass is not None else find_class(name)
 
-MODELS = ["Universal 3 Pro (AssemblyAI)", "Nova 3 (Deepgram)", "Voxtral Mini (Mistral)", "Gemini Flash (Google)", "Gemini Flash Lite (Google)"]
+MODELS = ["Universal 3 Pro (AssemblyAI)", "Voxtral Mini (Mistral)", "Gemini Flash Lite (Google)"]
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -126,9 +126,8 @@ class LocalizationManager:  # Credits: Command List plugin by @mihailkotovski
             "info_model_choice": "Which model do I choose?",
             "info_pricing": "Pricing",
             "pricing_assemblyai": "Free up to 185 hours total, then $0.15/hour.\n\nwww.assemblyai.com/pricing",
-            "pricing_deepgram": "Free up to ~700 hours total, then $0.26/hour.\n\ndeepgram.com/pricing",
             "pricing_mistral": "Free.\n\nmistral.ai/pricing",
-            "pricing_gemini": "Free, 20 requests per day for Flash, 500 for Flash Lite.\n\nai.google.dev/gemini-api/docs/pricing",
+            "pricing_gemini": "Free, 500 requests per day.\n\nai.google.dev/gemini-api/docs/pricing",
             "other_open_channel": "Open channel",
             "alert_close": "Close",
             "alert_cancel": "Cancel",
@@ -140,20 +139,10 @@ class LocalizationManager:  # Credits: Command List plugin by @mihailkotovski
   • Quality: 🏆 excellent
   • Diarization quality: 🥈 decent
 
-𝗡𝗼𝘃𝗮 𝟯 (𝗗𝗲𝗲𝗽𝗴𝗿𝗮𝗺):
-  • Speed: 🏆 2 sec. average
-  • Quality: 🥈 decent
-  • Diarization quality: 🥉 poor
-
 𝗩𝗼𝘅𝘁𝗿𝗮𝗹 𝗠𝗶𝗻𝗶 𝗟𝗮𝘁𝗲𝘀𝘁 (𝗠𝗶𝘀𝘁𝗿𝗮𝗹):
   • Speed: 🥇 3 sec. average
   • Quality: 🥇 good
   • Diarization quality: 🥇 good
-
-𝗚𝗲𝗺𝗶𝗻𝗶 𝗙𝗹𝗮𝘀𝗵 (𝗚𝗼𝗼𝗴𝗹𝗲):
-  • Speed: 🥇 3 sec. average
-  • Quality: 🏆 excellent
-  • Diarization quality: 🏆 excellent
 
 𝗚𝗲𝗺𝗶𝗻𝗶 𝗙𝗹𝗮𝘀𝗵 𝗟𝗶𝘁𝗲 (𝗚𝗼𝗼𝗴𝗹𝗲):
   • Speed: 🥇 3 sec. average
@@ -230,9 +219,8 @@ class LocalizationManager:  # Credits: Command List plugin by @mihailkotovski
             "info_model_choice": "Какую модель выбрать?",
             "info_pricing": "Стоимость",
             "pricing_assemblyai": "Бесплатно первые 185 часов аудио, затем 0,15$/час.\n\nwww.assemblyai.com/pricing",
-            "pricing_deepgram": "Бесплатно первые ~700 часов аудио, затем 0,26$/час.\n\ndeepgram.com/pricing",
             "pricing_mistral": "Бесплатно.\n\nmistral.ai/pricing",
-            "pricing_gemini": "Бесплатно, 20 запросов в день для Flash, 500 для Flash Lite.\n\nai.google.dev/gemini-api/docs/pricing",
+            "pricing_gemini": "Бесплатно, 500 запросов в день.\n\nai.google.dev/gemini-api/docs/pricing",
             "other_open_channel": "Открыть канал",
             "alert_close": "Закрыть",
             "alert_cancel": "Отмена",
@@ -244,20 +232,10 @@ class LocalizationManager:  # Credits: Command List plugin by @mihailkotovski
   • Качество: 🏆 отличное
   • Качество диаризации: 🥈 среднее
 
-𝗡𝗼𝘃𝗮 𝟯 (𝗗𝗲𝗲𝗽𝗴𝗿𝗮𝗺):
-  • Скорость: 🏆 2 сек. в среднем
-  • Качество: 🥈 среднее
-  • Качество диаризации: 🥉 плохое
-
 𝗩𝗼𝘅𝘁𝗿𝗮𝗹 𝗠𝗶𝗻𝗶 𝗟𝗮𝘁𝗲𝘀𝘁 (𝗠𝗶𝘀𝘁𝗿𝗮𝗹):
   • Скорость: 🥇 3 сек. в среднем
   • Качество: 🥇 хорошее
   • Качество диаризации: 🥇 хорошее
-
-𝗚𝗲𝗺𝗶𝗻𝗶 𝗙𝗹𝗮𝘀𝗵 (𝗚𝗼𝗼𝗴𝗹𝗲):
-  • Скорость: 🥇 3 сек. в среднем
-  • Качество: 🏆 отличное
-  • Качество диаризации: 🏆 отличное
 
 𝗚𝗲𝗺𝗶𝗻𝗶 𝗙𝗹𝗮𝘀𝗵 𝗟𝗶𝘁𝗲 (𝗚𝗼𝗼𝗴𝗹𝗲):
   • Скорость: 🥇 3 сек. в среднем
@@ -494,7 +472,7 @@ def check_single_proxy(proxy):  # Credits: BooruSearch by @ArThirtyFour
         if not proxy_dict:
             return proxy, False, 0
 
-        response = requests.get("https://deepgram.com/", proxies=proxy_dict, timeout=3)
+        response = requests.get("https://mistral.ai/", proxies=proxy_dict, timeout=3)
 
         if response.status_code == 200:
             response_time = time.time() - start_time
@@ -524,7 +502,7 @@ def save_working_proxies_to_file(working_proxies, filename="transcriber_proxies.
         log(f"[Transcriber] Ошибка при сохранении файла: {e}")
 
 
-def get_working_proxy(test_url: str = "https://deepgram.com/", rotate_ua: bool = True):  # Credits: BooruSearch by @ArThirtyFour
+def get_working_proxy(test_url: str = "https://mistral.ai/", rotate_ua: bool = True):  # Credits: BooruSearch by @ArThirtyFour
     try:
         working_proxies = load_working_proxies_from_file()
 
@@ -616,13 +594,13 @@ class TranscriberPlugin(BasePlugin):
         return super().on_plugin_load()
 
     def create_settings(self):
-        model = self.get_setting("model", 2)
+        model = self.get_setting("model", 1)
         settings = [
             Header(text=localization.get_string("header_settings")),
             Selector(
                 key="model",
                 text=localization.get_string("settings_model"),
-                default=2,
+                default=1,
                 items=MODELS,
                 icon="menu_feature_voice",
             ),
@@ -635,7 +613,7 @@ class TranscriberPlugin(BasePlugin):
             ),
         ]
 
-        if model in (3, 4):
+        if model == 2:
             settings.extend(
                 [
                     Switch(
@@ -656,7 +634,7 @@ class TranscriberPlugin(BasePlugin):
             )
         )
 
-        if model == 2:
+        if model == 1:
             settings.extend(
                 [
                     Header(text=localization.get_string("header_warning")),
@@ -668,7 +646,7 @@ class TranscriberPlugin(BasePlugin):
                     ),
                 ]
             )
-        elif model in (3, 4) and Locale.getDefault().getLanguage() == "ru":
+        elif model == 2 and Locale.getDefault().getLanguage() == "ru":
             settings.extend(
                 [
                     Header(text=localization.get_string("header_warning")),
@@ -702,22 +680,6 @@ class TranscriberPlugin(BasePlugin):
             settings.extend(
                 [
                     Input(
-                        key="token_deepgram",
-                        text=localization.get_string("token_token"),
-                        icon="menu_privacy" if len(self.get_setting("token_deepgram", "")) > 0 else "menu_unlock",
-                    ),
-                    Text(
-                        text=localization.get_string("token_get_token"),
-                        icon="msg_openin",
-                        on_click=self.open_token_page,
-                        red=len(self.get_setting("token_deepgram", "")) <= 0,
-                    ),
-                ]
-            )
-        elif model == 2:
-            settings.extend(
-                [
-                    Input(
                         key="token_mistral",
                         text=localization.get_string("token_token"),
                         default=MISTRAL_TOKEN,
@@ -731,7 +693,7 @@ class TranscriberPlugin(BasePlugin):
                     ),
                 ]
             )
-        elif model in (3, 4):
+        elif model == 2:
             settings.extend(
                 [
                     Input(
@@ -951,14 +913,12 @@ class TranscriberPlugin(BasePlugin):
                 if not messageObject:
                     return
 
-                model = self.get_setting("model", 2)
+                model = self.get_setting("model", 1)
                 if model == 0:
                     token = self.get_setting("token_assemblyai", "")
                 elif model == 1:
-                    token = self.get_setting("token_deepgram", "")
-                elif model == 2:
                     token = self.get_setting("token_mistral", MISTRAL_TOKEN)
-                elif model in (3, 4):
+                elif model == 2:
                     token = self.get_setting("token_gemini", "")
 
                 if token == "":
@@ -984,15 +944,13 @@ class TranscriberPlugin(BasePlugin):
 
     def open_pricing_alert(self, _):
         try:
-            model = self.get_setting("model", 2)
+            model = self.get_setting("model", 1)
 
             if model == 0:
                 text = localization.get_string("pricing_assemblyai")
             elif model == 1:
-                text = localization.get_string("pricing_deepgram")
-            elif model == 2:
                 text = localization.get_string("pricing_mistral")
-            elif model == 3 or model == 4:
+            elif model == 2:
                 text = localization.get_string("pricing_gemini")
             title = MODELS[model]
 
@@ -1029,7 +987,7 @@ class TranscriberPlugin(BasePlugin):
 
     def open_pricing_page(self, *_):
         try:
-            model = self.get_setting("model", 2)
+            model = self.get_setting("model", 1)
 
             current_fragment = get_last_fragment()
             if not current_fragment or not current_fragment.getParentActivity():
@@ -1038,10 +996,8 @@ class TranscriberPlugin(BasePlugin):
             if model == 0:
                 uri = "https://www.assemblyai.com/pricing"
             elif model == 1:
-                uri = "https://deepgram.com/pricing"
-            elif model == 2:
                 uri = "https://mistral.ai/pricing"
-            elif model == 3 or model == 4:
+            elif model == 2:
                 uri = "https://ai.google.dev/gemini-api/docs/pricing"
             intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri))
             context.startActivity(intent)
@@ -1052,7 +1008,7 @@ class TranscriberPlugin(BasePlugin):
 
     def open_token_page(self, _):
         try:
-            model = self.get_setting("model", 2)
+            model = self.get_setting("model", 1)
 
             current_fragment = get_last_fragment()
             if not current_fragment or not current_fragment.getParentActivity():
@@ -1061,10 +1017,8 @@ class TranscriberPlugin(BasePlugin):
             if model == 0:
                 uri = "https://t.me/ginqusPlugins/8"
             elif model == 1:
-                uri = "https://t.me/ginqusPlugins/9"
-            elif model == 2:
                 uri = "https://t.me/ginqusPlugins/10"
-            elif model == 3 or model == 4:
+            elif model == 2:
                 uri = "https://t.me/ginqusPlugins/11"
 
             Browser = _jc("org.telegram.messenger.browser.Browser")
@@ -1208,14 +1162,12 @@ class TranscriberPlugin(BasePlugin):
         # The logic is mostly identical to TranscribeButton.java but with minor changes
         def transcribePressed(self, param, messageObject, open):
             try:
-                model = self.plugin.get_setting("model", 2)
+                model = self.plugin.get_setting("model", 1)
                 if model == 0:
                     token = self.plugin.get_setting("token_assemblyai", "")
                 elif model == 1:
-                    token = self.plugin.get_setting("token_deepgram", "")
-                elif model == 2:
                     token = self.plugin.get_setting("token_mistral", MISTRAL_TOKEN)
-                elif model in (3, 4):
+                elif model == 2:
                     token = self.plugin.get_setting("token_gemini", "")
 
                 TranscribeButton = _jc("org.telegram.ui.Components.TranscribeButton")
@@ -1534,17 +1486,15 @@ class TranscriberPlugin(BasePlugin):
         def send_transcription_request(self, path, custom_model: Optional[int] = None):
             try:
                 if custom_model is None:
-                    model = self.plugin.get_setting("model", 2)
+                    model = self.plugin.get_setting("model", 1)
                 else:
                     model = custom_model
 
                 if model == 0:
                     token = self.plugin.get_setting("token_assemblyai", "")
                 elif model == 1:
-                    token = self.plugin.get_setting("token_deepgram", "")
-                elif model == 2:
                     token = self.plugin.get_setting("token_mistral", MISTRAL_TOKEN)
-                elif model in (3, 4):
+                elif model == 2:
                     token = self.plugin.get_setting("token_gemini", "")
 
                 custom_proxy_raw = self.plugin.get_setting("custom_proxy", "")
@@ -1608,64 +1558,7 @@ class TranscriberPlugin(BasePlugin):
                     else:
                         raise TimeoutError(localization.get_string("error_timed_out"))
 
-                elif model == 1:  # Doxgram ☠️☠️
-                    url = "https://api.deepgram.com/v1/listen?model=nova-3-general&smart_format=true&detect_language=true&diarize=true"
-                    headers = {
-                        "Authorization": f"Token {token}",
-                        "Content-Type": "audio/*",
-                    }
-                    with open(path, "rb") as audio_file:
-                        response = session.post(url, headers=headers, data=audio_file, timeout=60, proxies=proxy_dict)
-
-                    if response.status_code != 200:
-                        raise RuntimeError(f"{response.status_code}, {localization.get_string('response')}: {response.text}")
-
-                    if self.plugin.get_setting("separate_speakers", True):
-                        words = response.json()["results"]["channels"][0]["alternatives"][0]["words"]
-
-                        # Determine unique speakers
-                        unique_speakers = set()
-                        for word_data in words:
-                            if "speaker" in word_data:
-                                unique_speakers.add(word_data["speaker"])
-
-                        if len(unique_speakers) <= 1:
-                            return response.json()["results"]["channels"][0]["alternatives"][0]["transcript"]
-
-                        script_lines = []
-                        current_speaker = None
-                        current_dialogue_words = []
-
-                        def flush_dialogue(speaker_id, dialogue_words):
-                            if dialogue_words:
-                                speaker_label = chr(65 + speaker_id)
-                                full_line = " ".join(dialogue_words)
-                                return f'{speaker_label}: "{full_line}"'
-                            return None
-
-                        for word_data in words:
-                            speaker_id = word_data.get("speaker")
-                            punctuated_word = word_data.get("punctuated_word")
-
-                            if speaker_id is not None and speaker_id != current_speaker:
-                                line = flush_dialogue(current_speaker, current_dialogue_words)
-                                if line:
-                                    script_lines.append(line)
-                                current_speaker = speaker_id
-                                current_dialogue_words = [punctuated_word]
-                            elif punctuated_word:
-                                current_dialogue_words.append(punctuated_word)
-
-                        line = flush_dialogue(current_speaker, current_dialogue_words)
-                        if line:
-                            script_lines.append(line)
-
-                        result = "\n".join(script_lines)
-                    else:
-                        result = response.json()["results"]["channels"][0]["alternatives"][0]["transcript"]
-                    return str(result)
-
-                elif model == 2:  # Mistral
+                elif model == 1:  # Mistral
                     url = "https://api.mistral.ai/v1/audio/transcriptions"
                     headers = {"x-api-key": token}
                     files = {
@@ -1728,15 +1621,12 @@ class TranscriberPlugin(BasePlugin):
 
                     return response_data.get("text", "")
 
-                elif model in (3, 4):  # Gemini
+                elif model == 2:  # Gemini
                     # Credits: Voice to Text plugin by @PESSDES
                     with open(path, "rb") as f:
                         audio64 = base64.b64encode(f.read()).decode("utf-8")
 
-                    if model == 4:
-                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={token}"
-                    else:
-                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={token}"
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={token}"
 
                     mime_type = "video/mp4" if path.lower().endswith(".mp4") else "audio/ogg"
                     if self.plugin.get_setting("separate_speakers", True):
