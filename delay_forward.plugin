@@ -1,0 +1,301 @@
+from typing import Any, List
+
+from base_plugin import BasePlugin, MethodHook
+from hook_utils import find_class, get_private_field, set_private_field
+from java import dynamic_proxy
+from android_utils import run_on_ui_thread, OnClickListener, OnLongClickListener
+
+from org.telegram.messenger import R as R_tg, NotificationCenter, MessageObject, DialogObject, LocaleController, AndroidUtilities
+from org.telegram.ui import ChatActivity, DialogsActivity
+from android.os import Bundle, Handler, Looper
+from java.util import ArrayList
+from java.lang import Integer, Runnable
+from ui.bulletin import BulletinHelper
+from ui.settings import Header, Input
+
+__id__ = "delay_forward"
+__name__ = "Delay FWD"
+__type__ = "plugin"
+__description__ = "Adds a 'Delay Forward' option to the message context menu. Forwards the message/media to each selected chat one at a time, waiting a configurable number of seconds between each recipient."
+__version__ = "1.1.0"
+__author__ = "@xwvux"
+__min_version__ = "12.2.10"
+
+DELAY_SETTING_KEY = "delay_seconds"
+DEFAULT_DELAY_SECONDS = "5"
+MIN_DELAY_SECONDS = 1
+MAX_DELAY_SECONDS = 3600
+
+
+class DelayedForwardPlugin(BasePlugin):
+    def __init__(self):
+        super().__init__()
+        self._unhook_fill_menu = None
+        self._unhook_process_option = None
+        self._last_menu_message = None
+        self._menu_option_id = 9998
+        self._handler = None
+
+    def on_plugin_load(self):
+        self._add_delayed_forward_menu_item()
+
+    def on_plugin_unload(self):
+        self._remove_delayed_forward_menu_item()
+
+    def create_settings(self) -> List[Any]:
+        return [
+            Header(text="Delay FWD"),
+            Input(
+                key=DELAY_SETTING_KEY,
+                text="Delay between forwards (seconds)",
+                default=DEFAULT_DELAY_SECONDS,
+                subtext="How long to wait before forwarding to the next selected chat. Must be a whole number between %d and %d." % (MIN_DELAY_SECONDS, MAX_DELAY_SECONDS),
+                icon="msg_timer",
+                on_change=self._on_delay_setting_change,
+            ),
+        ]
+
+    def _on_delay_setting_change(self, new_value):
+
+        try:
+            seconds = int(str(new_value).strip())
+            if seconds < MIN_DELAY_SECONDS or seconds > MAX_DELAY_SECONDS:
+                raise ValueError()
+        except Exception:
+            try:
+                BulletinHelper.show_simple(
+                    "Enter a whole number between %d and %d seconds" % (MIN_DELAY_SECONDS, MAX_DELAY_SECONDS),
+                    R_tg.raw.error,
+                    None,
+                )
+            except Exception:
+                pass
+            self.set_setting(DELAY_SETTING_KEY, DEFAULT_DELAY_SECONDS)
+
+    def _get_delay_ms(self):
+        raw = self.get_setting(DELAY_SETTING_KEY, DEFAULT_DELAY_SECONDS)
+        try:
+            seconds = int(str(raw).strip())
+            if seconds < MIN_DELAY_SECONDS or seconds > MAX_DELAY_SECONDS:
+                raise ValueError()
+        except Exception:
+            seconds = int(DEFAULT_DELAY_SECONDS)
+        return seconds * 1000
+
+    def _is_service_message(self, message):
+        try:
+            from org.telegram.tgnet import TLRPC
+            return message and hasattr(message, 'messageOwner') and isinstance(message.messageOwner, TLRPC.TL_messageService)
+        except Exception:
+            return False
+
+    def _is_failed_message(self, message):
+        try:
+            if not message or not hasattr(message, 'messageOwner') or not message.messageOwner:
+                return False
+            message_owner = message.messageOwner
+            return (hasattr(message_owner, 'send_state') and message_owner.send_state == 2) or \
+                   (hasattr(message_owner, 'id') and message_owner.id < 0)
+        except Exception:
+            return False
+
+    def _is_scheduled_message(self, message):
+        try:
+            return message and hasattr(message, 'scheduled') and message.scheduled
+        except Exception:
+            return False
+
+    def _menu_item_condition(self, message):
+        return (message is not None and
+                not self._is_service_message(message) and
+                not self._is_failed_message(message) and
+                not self._is_scheduled_message(message))
+
+    def _collect_group_messages(self, chat_activity, message):
+        result = ArrayList()
+        if message is None:
+            return result
+
+        group_id = message.getGroupId() if hasattr(message, 'getGroupId') else 0
+        if group_id:
+            try:
+                messages_dict = get_private_field(chat_activity, "messagesDict")
+                if messages_dict is not None:
+                    for msg_dict in messages_dict:
+                        if msg_dict is None:
+                            continue
+                        keys = [msg_dict.keyAt(idx) for idx in range(msg_dict.size())]
+                        for key in keys:
+                            msg = msg_dict.get(key)
+                            if msg is not None and hasattr(msg, 'getGroupId') and msg.getGroupId() == group_id:
+                                result.add(msg)
+            except Exception:
+                pass
+
+        if result.size() == 0:
+            result.add(message)
+        return result
+
+    def _on_delayed_forward_click(self, chat_activity, message):
+        if not chat_activity:
+            return
+        messages = self._collect_group_messages(chat_activity, message)
+        self._open_dialog_picker(chat_activity, messages)
+
+    def _open_dialog_picker(self, chat_activity, messages):
+        try:
+            if not chat_activity or not messages or messages.size() == 0:
+                return
+
+            if hasattr(chat_activity, 'getCurrentChat') and chat_activity.getCurrentChat():
+                if chat_activity.getMessagesController().isChatNoForwards(chat_activity.getCurrentChat()):
+                    return
+
+            args = Bundle()
+            args.putBoolean("onlySelect", True)
+            args.putBoolean("canSelectTopics", True)
+            args.putInt("dialogsType", 3)
+
+            dialogs_fragment = DialogsActivity(args)
+
+            plugin_ref = self
+
+            class DelayedForwardDelegate(dynamic_proxy(DialogsActivity.DialogsActivityDelegate)):
+                def __init__(self, messages, ca):
+                    super().__init__()
+                    self.messages = messages
+                    self.chat_activity = ca
+
+                def didSelectDialogs(self, fragment1, dids, message_text, param, notify, scheduleDate, topicsFragment):
+                    plugin_ref._schedule_delayed_sends(self.chat_activity, self.messages, dids)
+                    fragment1.finishFragment()
+                    return True
+
+                def canSelectStories(self):
+                    return False
+
+            dialogs_fragment.setDelegate(DelayedForwardDelegate(messages, chat_activity))
+            chat_activity.presentFragment(dialogs_fragment)
+        except Exception:
+            pass
+
+    def _schedule_delayed_sends(self, chat_activity, messages, dids):
+        try:
+            if not dids or dids.size() == 0:
+                return
+
+            if self._handler is None:
+                self._handler = Handler(Looper.getMainLooper())
+
+            plugin_ref = self
+            total = dids.size()
+            delay_ms = self._get_delay_ms()
+
+            def make_runnable(index):
+                dialog = dids.get(index)
+                did = dialog.dialogId
+                topic_id = dialog.topicId if hasattr(dialog, 'topicId') and dialog.topicId else 0
+
+                class SendRunnable(dynamic_proxy(Runnable)):
+                    def run(self_r):
+                        try:
+                            send_helper = chat_activity.getSendMessagesHelper()
+                            if send_helper:
+                                send_helper.sendMessage(messages, did, True, False, True, topic_id, 0)
+
+                            name = plugin_ref._get_dialog_name(chat_activity, did)
+                            text = "Forwarded to %s (%d/%d)" % (name, index + 1, total)
+                            BulletinHelper.show_simple(text, R_tg.raw.forward, chat_activity)
+                        except Exception:
+                            pass
+
+                return SendRunnable()
+
+            for i in range(total):
+                self._handler.postDelayed(make_runnable(i), i * delay_ms)
+
+        except Exception:
+            pass
+
+    def _get_dialog_name(self, chat_activity, did):
+        try:
+            messages_controller = chat_activity.getMessagesController()
+            if DialogObject.isUserDialog(did):
+                user = messages_controller.getUser(did)
+                if user:
+                    return user.first_name or "chat"
+            elif DialogObject.isChatDialog(did):
+                chat = messages_controller.getChat(-did)
+                if chat:
+                    return chat.title
+            return "chat"
+        except Exception:
+            return "chat"
+
+    def _add_delayed_forward_menu_item(self):
+        try:
+            fill_method = ChatActivity.getClass().getDeclaredMethod(
+                "fillMessageMenu",
+                MessageObject,
+                ArrayList,
+                ArrayList,
+                ArrayList
+            )
+            process_method = ChatActivity.getClass().getDeclaredMethod(
+                "processSelectedOption",
+                Integer.TYPE
+            )
+
+            plugin_ref = self
+
+            class FillMenuHook(MethodHook):
+                def after_hooked_method(hook_self, param):
+                    try:
+                        message = param.args[0]
+                        if message is None:
+                            return
+                        plugin_ref._last_menu_message = message
+                        if not plugin_ref._menu_item_condition(message):
+                            return
+                        icons = param.args[1]
+                        items = param.args[2]
+                        options = param.args[3]
+                        icons.add(0, Integer(R_tg.drawable.media_share))
+                        options.add(0, Integer(plugin_ref._menu_option_id))
+                        items.add(0, "Delay FWD")
+                    except Exception:
+                        pass
+
+            class ProcessOptionHook(MethodHook):
+                def before_hooked_method(hook_self, param):
+                    try:
+                        opt_val = int(param.args[0])
+                        if opt_val != plugin_ref._menu_option_id:
+                            return
+                        chat_activity = param.thisObject
+                        message = getattr(chat_activity, 'selectedObject', None)
+                        if message is None:
+                            message = plugin_ref._last_menu_message
+                        try:
+                            chat_activity.closeMenu()
+                        except Exception:
+                            pass
+                        plugin_ref._on_delayed_forward_click(chat_activity, message)
+                        param.setResult(None)
+                    except Exception:
+                        pass
+
+            self._unhook_fill_menu = self.hook_method(fill_method, FillMenuHook())
+            self._unhook_process_option = self.hook_method(process_method, ProcessOptionHook())
+        except Exception:
+            pass
+
+    def _remove_delayed_forward_menu_item(self):
+        for attr_name in ("_unhook_fill_menu", "_unhook_process_option"):
+            hook = getattr(self, attr_name, None)
+            if hook:
+                try:
+                    self.unhook_method(hook)
+                except Exception:
+                    pass
+                setattr(self, attr_name, None)
