@@ -167,15 +167,6 @@ class DelayedForwardPlugin(BasePlugin):
                     self.chat_activity = ca
 
                 def didSelectDialogs(self, *args):
-                    # NOTE: current exteraGram/nagram XF's DialogsActivityDelegate
-                    # interface calls this with 8 arguments; the original fixed
-                    # signature here only declared 7 (it's missing one int
-                    # parameter Telegram added between scheduleDate and
-                    # topicsFragment). That arg-count mismatch is what crashed
-                    # the app on selecting recipients. Accepting *args and
-                    # identifying the fragment/dids by shape instead of fixed
-                    # position makes this immune to that (and any future)
-                    # parameter-count change.
                     fragment1 = None
                     dids = None
                     for a in args:
@@ -260,16 +251,6 @@ class DelayedForwardPlugin(BasePlugin):
             return "chat"
 
     def _add_delayed_forward_menu_item(self):
-        # NOTE: previously this did `ChatActivity.getClass().getDeclaredMethod(...)`.
-        # `ChatActivity` here is already a Class reference (direct import, not
-        # find_class), so calling `.getClass()` on it does NOT return
-        # ChatActivity's own Class object - the exteraGram SDK docs explicitly
-        # warn against this pattern. Some older client builds tolerated it;
-        # current exteraGram and nagram XF do not, which is what broke/crashed
-        # this plugin on those builds. Fixed by resolving the real class via
-        # find_class(...) and hooking by name (hook_all_methods) instead of a
-        # single hardcoded overload, so a future signature change degrades
-        # gracefully instead of failing to hook at all.
         try:
             ChatActivityClass = find_class("org.telegram.ui.ChatActivity")
             if not ChatActivityClass:
