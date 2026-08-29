@@ -1,5 +1,5 @@
 name: IOS Amoled
-shortname: iosamoledv9
+shortname: iosamoled
 actionBarActionModeDefault: #1D1D1D
 actionBarActionModeDefaultIcon: #FFFFFF
 actionBarActionModeDefaultSelector: #FFFFFF20
