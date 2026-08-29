@@ -1,5 +1,5 @@
 name: IOS Amoled
-shortname: iosamoled
+shortname: iosamoledv9
 actionBarActionModeDefault: #1D1D1D
 actionBarActionModeDefaultIcon: #FFFFFF
 actionBarActionModeDefaultSelector: #FFFFFF20
@@ -11,7 +11,7 @@ actionBarDefaultArchivedIcon: #FFFFFF
 actionBarDefaultArchivedSearch: #FFFFFF
 actionBarDefaultArchivedSelector: #3C3C3C
 actionBarDefaultArchivedTitle: #FFFFFF
-actionBarDefaultIcon: #3E88F6
+actionBarDefaultIcon: #7D7D7D
 actionBarDefaultSearch: #FFFFFF
 actionBarDefaultSearchArchivedPlaceholder: #FFFFFF88
 actionBarDefaultSearchPlaceholder: #FFFFFF88
@@ -40,7 +40,7 @@ avatar_backgroundInProfileBlue: #2A79FB
 avatar_backgroundOrange: #F2BC64
 avatar_backgroundPink: #F2749A
 avatar_backgroundRed: #DC805B
-avatar_backgroundSaved: #207BFF
+avatar_backgroundSaved: #3C3C3C
 avatar_backgroundViolet: #8E85EE
 avatar_nameInMessageBlue: #79C4FC
 avatar_nameInMessageCyan: #5DE5DD
