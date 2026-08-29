@@ -30,7 +30,7 @@ actionBarWhiteSelector: #FFFFFF20
 avatar_actionBarIconBlue: #FFFFFF
 avatar_actionBarSelectorBlue: #3C3C3C
 avatar_backgroundActionBarBlue: #000000
-avatar_backgroundArchived: #3C3C3C
+avatar_backgroundArchived: #2D2D2D
 avatar_backgroundArchivedHidden: #4CB4F5
 avatar_backgroundBlue: #549CDD
 avatar_backgroundCyan: #5FBED5
@@ -40,7 +40,7 @@ avatar_backgroundInProfileBlue: #2A79FB
 avatar_backgroundOrange: #F2BC64
 avatar_backgroundPink: #F2749A
 avatar_backgroundRed: #DC805B
-avatar_backgroundSaved: #3C3C3C
+avatar_backgroundSaved: #2D2D2D
 avatar_backgroundViolet: #8E85EE
 avatar_nameInMessageBlue: #79C4FC
 avatar_nameInMessageCyan: #5DE5DD
