@@ -1,5 +1,5 @@
 name: IOS Theme by @xzrci
-shortname: iosxzrc
+shortname: iosxzrci
 actionBarActionModeDefault: #1D1D1D
 actionBarActionModeDefaultIcon: #FFFFFF
 actionBarActionModeDefaultSelector: #FFFFFF20
