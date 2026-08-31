@@ -1,10 +1,10 @@
-name: IOS Amoled
-shortname: iosamoled
+name: IOS Amoled 2
+shortname: iosamoledoo
 actionBarActionModeDefault: #1D1D1D
 actionBarActionModeDefaultIcon: #FFFFFF
 actionBarActionModeDefaultSelector: #FFFFFF20
 actionBarActionModeDefaultTop: #000000
-actionBarBrowser: #000000
+actionBarBrowser: #FFFFFF
 actionBarDefault: #1D1D1D
 actionBarDefaultArchived: #1D1D1D
 actionBarDefaultArchivedIcon: #7D7D7D
