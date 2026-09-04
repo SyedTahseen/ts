@@ -124,12 +124,6 @@ async def rename_topic(client: Client, message: Message):
 
 @Client.on_message(filters.command(["mtopic", "mt"], prefix) & filters.me, group=2)
 async def find_topic(client: Client, message: Message):
-    """
-    Usage: .mtopic [message_id]  (run anywhere — uses the saved mlog chat)
-    Fetches the given message from the saved mlog chat, finds which
-    topic it belongs to, and replies inside that topic so it shows
-    up as unread there.
-    """
     if len(message.command) < 2:
         return await message.edit(f"<b>Usage:</b> <code>{prefix}mtopic [message_id]</code>")
 
@@ -168,7 +162,6 @@ async def find_topic(client: Client, message: Message):
         await sleep(2)
         return await status_msg.delete()
 
-    # Reverse-lookup which logged user owns this topic
     group_data = get_group_data(chat_id)
     user_topics = group_data.get("user_topics", {})
     owner_user_id = next((uid for uid, tid in user_topics.items() if tid == topic_id), None)
