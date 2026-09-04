@@ -125,9 +125,10 @@ async def rename_topic(client: Client, message: Message):
 @Client.on_message(filters.command(["mtopic", "mt"], prefix) & filters.me, group=2)
 async def find_topic(client: Client, message: Message):
     """
-    Usage: .mtopic [message_id]  (run inside the forum group)
-    Fetches the given message, finds which topic it belongs to,
-    and replies inside that topic so it shows up as unread there.
+    Usage: .mtopic [message_id]  (run anywhere — uses the saved mlog chat)
+    Fetches the given message from the saved mlog chat, finds which
+    topic it belongs to, and replies inside that topic so it shows
+    up as unread there.
     """
     if len(message.command) < 2:
         return await message.edit(f"<b>Usage:</b> <code>{prefix}mtopic [message_id]</code>")
@@ -293,6 +294,6 @@ modules_help["mlog"] = {
     "mlog [on/off]": "Enable or disable media logging",
     "msetchat [chat_id]": "Set the chat ID for media logging",
     "mrename [user_id]": "Rename a user's topic",
-    "mtopic [message_id]": "Reply inside the topic a given message belongs to (run in the forum group)",
+    "mtopic [message_id]": "Reply inside the topic a given message belongs to (uses saved mlog chat)",
     "mt [message_id]": "Alias for mtopic",
 }
