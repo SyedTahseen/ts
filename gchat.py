@@ -237,11 +237,12 @@ def build_system_instruction(bot_role):
     return role_text
 
 def build_prompt(chat_history, user_message):
-    timestamp = datetime.datetime.now(la_timezone).strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.datetime.now(la_timezone).strftime("%Y-%m-%d %H:%M:%S %Z (%A)")
     chat_context = "\n".join(chat_history)
     prompt = (
-        f"Current Time: {timestamp}\n"
-        f"Chat History:\n{chat_context}"
+        f"Chat History:\n{chat_context}\n\n"
+        f"[System note: the current date/time in Los Angeles is {timestamp}. "
+        f"Always use this exact value if asked what time or date it is — never guess.]"
     )
     return prompt
 
